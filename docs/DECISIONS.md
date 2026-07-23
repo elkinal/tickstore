@@ -226,3 +226,64 @@ Negligible for a real-time engine.
 **Revisit.** If trade-level gap-filling is ever required, do it with a bounded
 REST backfill over the gap window (mirroring the book's snapshot resync), never
 with `last_match`.
+
+---
+
+## D12 — Store prices/sizes as raw Int64 in ClickHouse (scale 8), not Decimal
+*2026-07-23*
+
+**Decision.** The `trades` table stores `price` and `size` as `Int64` — the same
+fixed-point integers we carry in memory (real value = stored / 1e8). Not
+`Decimal`, not `Float`. The scale (8) is documented in the schema; queries scale
+at read time (e.g. `price / 1e8`, or `sum(price*size)/sum(size)/1e8` for VWAP).
+
+**Why.** It's the exact same representation as `norm.Trade` (D1), so insert is a
+straight copy with no conversion and no precision question. `Float` is out — it
+reintroduces the drift D1 exists to avoid. `Decimal` (ClickHouse's exact
+fixed-point) would be the analyst-friendly middle ground, but the `clickhouse-go`
+driver wants a `shopspring/decimal` value for Decimal columns, which is a new
+dependency outside the allowed list — not worth it to save a `/1e8` in queries.
+
+**Cost.** Every query must know the scale and divide. Slightly less ergonomic for
+ad-hoc analysis.
+
+**Revisit.** When per-symbol scales arrive (D10, milestone 5), or if query
+ergonomics matter enough, expose a `Decimal` view (`CAST(price AS Decimal64(8)) /
+1e8`) over the raw table — keeping exact storage while giving analysts natural
+columns. That needs no driver dependency since it's read-side SQL.
+
+---
+
+## D13 — Sink batching: single-owner goroutine, bounded-channel backpressure, retry-until-shutdown
+*2026-07-23*
+
+**Decision.** The `Batcher` (`internal/sink`) buffers trades in one goroutine and
+flushes on **size (10k) or 250ms**, whichever first. `OnTrade` feeds it over a
+bounded channel; when full it blocks. Failed inserts retry with jittered
+exponential backoff and never drop data except when a shutdown deadline is hit.
+The DB write sits behind an `Inserter` interface.
+
+**Why.**
+- *One goroutine owns the buffer* → no mutexes; trades, the flush timer, and
+  shutdown are all just cases in one `select`. Simplest thing that's correct.
+- *Bounded channel = backpressure.* If ClickHouse can't keep up, the channel
+  fills and `OnTrade` blocks, which (per D4) propagates back through the connector
+  read loop to the venue — bounded memory instead of an unbounded queue that OOMs.
+- *Retry-until-shutdown.* A storage hiccup shouldn't lose trades, so inserts retry
+  indefinitely while running; only a bounded shutdown flush may give up.
+- *Inserter interface* keeps all of the above testable without a real ClickHouse
+  (fake inserter unit tests, incl. no-loss-under-backpressure).
+
+**Cost.**
+- Inserts are serial with buffering: while one flush is in flight the run loop
+  isn't draining, so throughput is one batch at a time. Fine at target rates;
+  a pipelined design (accumulate the next batch during a flush) is the upgrade if
+  a single venue ever saturates it.
+- Backpressure on one slow sink stalls the connector feeding it. Acceptable with
+  one venue; when venues share a sink, isolation may need revisiting.
+- The flush timer is a free-running ticker, so it can fire on an empty buffer just
+  after a size flush (a cheap no-op). Simpler than resetting a timer per flush.
+
+**Revisit.** If one venue's volume outgrows serial inserts, pipeline flushing.
+Prometheus counters (batch size, flush latency, retries) land with the metrics
+package in milestone 6.
