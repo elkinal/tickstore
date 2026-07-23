@@ -1,0 +1,24 @@
+{
+  "trades": [
+    {
+      "venue": "kraken",
+      "symbol": "BTC/USD",
+      "ts_exchange": "2026-07-23T22:56:48.226099Z",
+      "price": "65140.30000000",
+      "price_raw": 6514030000000,
+      "size": "0.01500000",
+      "side": "buy",
+      "trade_id": "104182603"
+    },
+    {
+      "venue": "kraken",
+      "symbol": "BTC/USD",
+      "ts_exchange": "2026-07-23T22:56:48.3Z",
+      "price": "65139.90000000",
+      "price_raw": 6513990000000,
+      "size": "0.00250000",
+      "side": "sell",
+      "trade_id": "104182604"
+    }
+  ]
+}

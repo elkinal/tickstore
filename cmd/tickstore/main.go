@@ -21,6 +21,7 @@ import (
 	"github.com/elkinal/tickstore/internal/sink"
 	"github.com/elkinal/tickstore/internal/venue"
 	"github.com/elkinal/tickstore/internal/venue/coinbase"
+	"github.com/elkinal/tickstore/internal/venue/kraken"
 )
 
 // shutdownTimeout bounds the final sink flush so a wedged ClickHouse can't hang
@@ -55,6 +56,7 @@ func main() {
 	chDB := flag.String("clickhouse-db", "tickstore", "ClickHouse database")
 	bookMode := flag.Bool("book", false,
 		"stream L2 order books and print top-of-book, instead of trades")
+	venueName := flag.String("venue", "coinbase", "venue: coinbase or kraken")
 	flag.Parse()
 	symbols := strings.Split(*symbolsFlag, ",")
 
@@ -65,8 +67,14 @@ func main() {
 	defer stop()
 
 	if *bookMode {
-		runBookMode(ctx, symbols, log)
+		runBookMode(ctx, symbols, log) // book mode is Coinbase-only for now
 		return
+	}
+
+	conn, err := tradeConnector(*venueName, symbols, log)
+	if err != nil {
+		log.Error("startup failed", "error", err)
+		os.Exit(1)
 	}
 
 	// Pick the destination for trades. onShutdown flushes it, if needed.
@@ -79,8 +87,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	log.Info("starting", "symbols", symbols)
-	runErr := coinbase.New(symbols, log).Run(ctx, handler)
+	log.Info("starting", "venue", conn.Name(), "symbols", symbols)
+	runErr := conn.Run(ctx, handler)
 
 	if onShutdown != nil {
 		onShutdown()
@@ -90,6 +98,18 @@ func main() {
 		os.Exit(1)
 	}
 	log.Info("shut down cleanly")
+}
+
+// tradeConnector builds the trade connector for the named venue.
+func tradeConnector(name string, symbols []string, log *slog.Logger) (venue.Venue, error) {
+	switch name {
+	case "coinbase":
+		return coinbase.New(symbols, log), nil
+	case "kraken":
+		return kraken.New(symbols, log), nil
+	default:
+		return nil, fmt.Errorf("unknown venue %q (want coinbase or kraken)", name)
+	}
 }
 
 // runBookMode streams L2 order books and prints each book's top-of-book,
