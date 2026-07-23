@@ -127,6 +127,21 @@ func TestParseMessageErrors(t *testing.T) {
 			wantSub: "price",
 		},
 		{
+			name:    "bad size",
+			raw:     `{"type":"match","trade_id":1,"side":"buy","size":"1.2.3","price":"1","product_id":"BTC-USD","time":"2026-07-22T14:03:11Z"}`,
+			wantSub: "size",
+		},
+		{
+			name:    "non-positive price",
+			raw:     `{"type":"match","trade_id":1,"side":"buy","size":"1","price":"0","product_id":"BTC-USD","time":"2026-07-22T14:03:11Z"}`,
+			wantSub: "non-positive price",
+		},
+		{
+			name:    "non-positive size",
+			raw:     `{"type":"match","trade_id":1,"side":"buy","size":"-1","price":"1","product_id":"BTC-USD","time":"2026-07-22T14:03:11Z"}`,
+			wantSub: "non-positive size",
+		},
+		{
 			name:    "bad time",
 			raw:     `{"type":"match","trade_id":1,"side":"buy","size":"1","price":"1","product_id":"BTC-USD","time":"yesterday"}`,
 			wantSub: "time",

@@ -52,6 +52,9 @@ func parseMessage(raw []byte, tsReceived time.Time) (*norm.Trade, error) {
 // side, but we store the taker's, so it's flipped here: a maker "sell" means a
 // taker bought.
 func normalize(m *wireMessage, tsReceived time.Time) (*norm.Trade, error) {
+	if m.ProductID == "" {
+		return nil, fmt.Errorf("coinbase: match frame missing product_id")
+	}
 	var side norm.Side
 	switch m.Side {
 	case "sell":
@@ -61,20 +64,25 @@ func normalize(m *wireMessage, tsReceived time.Time) (*norm.Trade, error) {
 	default:
 		return nil, fmt.Errorf("coinbase: unexpected side %q", m.Side)
 	}
+	// ParseFixed allows zero and negatives (book updates will need them), but a
+	// trade must have a positive price and size, so reject anything else here.
 	price, err := norm.ParseFixed(m.Price, norm.PriceDecimals)
 	if err != nil {
 		return nil, fmt.Errorf("coinbase: price: %w", err)
+	}
+	if price <= 0 {
+		return nil, fmt.Errorf("coinbase: non-positive price %q", m.Price)
 	}
 	size, err := norm.ParseFixed(m.Size, norm.SizeDecimals)
 	if err != nil {
 		return nil, fmt.Errorf("coinbase: size: %w", err)
 	}
+	if size <= 0 {
+		return nil, fmt.Errorf("coinbase: non-positive size %q", m.Size)
+	}
 	tsExchange, err := time.Parse(time.RFC3339Nano, m.Time)
 	if err != nil {
 		return nil, fmt.Errorf("coinbase: time: %w", err)
-	}
-	if m.ProductID == "" {
-		return nil, fmt.Errorf("coinbase: match frame missing product_id")
 	}
 	return &norm.Trade{
 		Venue:      Name,
