@@ -1,0 +1,24 @@
+{
+  "trades": [
+    {
+      "venue": "okx",
+      "symbol": "BTC-USDT",
+      "ts_exchange": "2026-07-23T23:25:23.233Z",
+      "price": "65176.30000000",
+      "price_raw": 6517630000000,
+      "size": "0.00524071",
+      "side": "sell",
+      "trade_id": "1035721474"
+    },
+    {
+      "venue": "okx",
+      "symbol": "BTC-USDT",
+      "ts_exchange": "2026-07-23T23:25:24.733Z",
+      "price": "65176.40000000",
+      "price_raw": 6517640000000,
+      "size": "0.01136454",
+      "side": "buy",
+      "trade_id": "1035721479"
+    }
+  ]
+}

@@ -22,6 +22,7 @@ import (
 	"github.com/elkinal/tickstore/internal/venue"
 	"github.com/elkinal/tickstore/internal/venue/coinbase"
 	"github.com/elkinal/tickstore/internal/venue/kraken"
+	"github.com/elkinal/tickstore/internal/venue/okx"
 )
 
 // shutdownTimeout bounds the final sink flush so a wedged ClickHouse can't hang
@@ -107,8 +108,10 @@ func tradeConnector(name string, symbols []string, log *slog.Logger) (venue.Venu
 		return coinbase.New(symbols, log), nil
 	case "kraken":
 		return kraken.New(symbols, log), nil
+	case "okx":
+		return okx.New(symbols, log), nil
 	default:
-		return nil, fmt.Errorf("unknown venue %q (want coinbase or kraken)", name)
+		return nil, fmt.Errorf("unknown venue %q (want coinbase, kraken, or okx)", name)
 	}
 }
 
