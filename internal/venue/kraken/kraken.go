@@ -12,6 +12,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/elkinal/tickstore/internal/metrics"
 	"github.com/elkinal/tickstore/internal/venue"
 )
 
@@ -100,11 +101,13 @@ func (c *Connector) session(ctx context.Context, h venue.Handler) (gotData bool,
 		if err != nil {
 			return gotData, fmt.Errorf("read: %w", err)
 		}
+		metrics.Messages.WithLabelValues(Name).Inc()
 		trades, err := parseMessage(raw, time.Now())
 		if err != nil {
 			if errors.Is(err, errVenueError) {
 				return gotData, err
 			}
+			metrics.ParseErrors.WithLabelValues(Name).Inc()
 			c.log.Error("parse error", "error", err, "raw", string(raw))
 			continue
 		}

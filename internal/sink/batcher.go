@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/elkinal/tickstore/internal/metrics"
 	"github.com/elkinal/tickstore/internal/norm"
 )
 
@@ -99,6 +100,8 @@ func NewBatcher(inserter Inserter, cfg Config) *Batcher {
 // blocks, pushing backpressure up to the connector — better than growing memory
 // without bound. It returns early only if the Batcher is closing.
 func (b *Batcher) OnTrade(t norm.Trade) {
+	metrics.Trades.WithLabelValues(t.Venue).Inc()
+	metrics.E2ELatencySeconds.WithLabelValues(t.Venue).Observe(t.TsReceived.Sub(t.TsExchange).Seconds())
 	select {
 	case b.in <- t:
 	case <-b.stop:
@@ -158,6 +161,8 @@ func (b *Batcher) insertWithRetry(trades []norm.Trade) {
 		start := time.Now()
 		err := b.inserter.Insert(b.opCtx, trades)
 		if err == nil {
+			metrics.SinkBatchRows.Observe(float64(len(trades)))
+			metrics.SinkFlushSeconds.Observe(time.Since(start).Seconds())
 			b.cfg.Logger.Debug("flushed batch",
 				"rows", len(trades), "took", time.Since(start).Round(time.Millisecond))
 			return

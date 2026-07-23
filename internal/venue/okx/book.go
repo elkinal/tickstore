@@ -9,6 +9,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/elkinal/tickstore/internal/book"
+	"github.com/elkinal/tickstore/internal/metrics"
 	"github.com/elkinal/tickstore/internal/norm"
 	"github.com/elkinal/tickstore/internal/venue"
 )
@@ -150,6 +151,8 @@ func (c *BookConnector) applyBook(instID, action string, d *bookData, books map[
 		sb.seeded = true
 	} else {
 		if !sb.contiguous(d.PrevSeqID) {
+			metrics.Gaps.WithLabelValues(Name).Inc()
+			metrics.Resyncs.WithLabelValues(Name).Inc()
 			return fmt.Errorf("okx: %s seq gap: prevSeqId %d, have %d", instID, d.PrevSeqID, sb.lastSeqID)
 		}
 		if err := c.applyChanges(sb, d.Bids, norm.Buy); err != nil {

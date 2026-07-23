@@ -9,6 +9,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/elkinal/tickstore/internal/book"
+	"github.com/elkinal/tickstore/internal/metrics"
 	"github.com/elkinal/tickstore/internal/norm"
 	"github.com/elkinal/tickstore/internal/venue"
 )
@@ -190,6 +191,8 @@ func (c *BookConnector) applyBook(d *bookDataWire, isSnapshot bool, precisions m
 	if prec, ok := precisions[d.Symbol]; ok {
 		bids, asks := sb.book.Depth(10)
 		if got := bookChecksum(bids, asks, prec.price, prec.qty); got != d.Checksum {
+			metrics.Gaps.WithLabelValues(Name).Inc()
+			metrics.Resyncs.WithLabelValues(Name).Inc()
 			return fmt.Errorf("kraken: %s checksum mismatch: got %d, want %d", d.Symbol, got, d.Checksum)
 		}
 	}

@@ -14,7 +14,13 @@ import (
 type Config struct {
 	ClickHouse ClickHouse `yaml:"clickhouse"`
 	Sink       Sink       `yaml:"sink"`
+	Metrics    Metrics    `yaml:"metrics"`
 	Venues     []Venue    `yaml:"venues"`
+}
+
+// Metrics configures the Prometheus endpoint. An empty Addr disables it.
+type Metrics struct {
+	Addr string `yaml:"addr"`
 }
 
 // ClickHouse is the sink's connection. An empty Addr means "print to stdout"

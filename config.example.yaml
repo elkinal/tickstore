@@ -14,6 +14,9 @@ sink:
   max_delay: 250ms # ...or after this long, whichever comes first
   buffer: 20000 # in-flight channel capacity (backpressure bound)
 
+metrics:
+  addr: ":9090" # Prometheus endpoint at /metrics; empty disables it
+
 venues:
   - name: coinbase
     symbols: [BTC-USD, ETH-USD]
