@@ -125,6 +125,8 @@ func runBookMode(ctx context.Context, venueName string, symbols []string, log *s
 		runner = coinbase.NewBook(symbols, printer, log)
 	case "kraken":
 		runner = kraken.NewBook(symbols, printer, log)
+	case "okx":
+		runner = okx.NewBook(symbols, printer, log)
 	default:
 		log.Error("unknown venue for book mode", "venue", venueName)
 		os.Exit(1)
