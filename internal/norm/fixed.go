@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// pow10 holds 10^i for i in [0, 18], every power of ten representable in int64.
+// pow10[i] is 10^i, for every power of ten that fits in an int64.
 var pow10 = [19]int64{
 	1, 10, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000,
 	1_000_000_000, 10_000_000_000, 100_000_000_000, 1_000_000_000_000,
@@ -13,13 +13,13 @@ var pow10 = [19]int64{
 	10_000_000_000_000_000, 100_000_000_000_000_000, 1_000_000_000_000_000_000,
 }
 
-// ParseFixed parses a decimal string such as "50123.45" into a fixed-point
-// int64 with dp decimal places, without going through float64.
+// ParseFixed turns a decimal string like "50123.45" into a fixed-point int64
+// scaled to dp decimal places, without ever using float64. So "50123.45" at
+// dp=2 gives 5012345.
 //
-// Extra fractional digits are accepted only if they are zeros; nonzero
-// digits beyond dp are an error rather than a silent precision loss.
-// dp must be in [0, 18]. The representable range is symmetric,
-// ±(1<<63 - 1); the lone value MinInt64 is rejected as overflow.
+// Digits past dp are only allowed if they're zeros; anything else is an error,
+// not a silent round-off. dp must be 0..18. The valid range is ±(1<<63 - 1),
+// so plain MinInt64 counts as overflow.
 func ParseFixed(s string, dp int) (int64, error) {
 	if dp < 0 || dp > 18 {
 		return 0, fmt.Errorf("norm: decimal places %d out of range [0, 18]", dp)
@@ -37,13 +37,14 @@ func ParseFixed(s string, dp int) (int64, error) {
 	if intPart == "" && fracPart == "" {
 		return 0, fmt.Errorf("norm: empty number %q", orig)
 	}
-	// Nonzero digits beyond dp would be silently dropped; refuse them.
+	// Reject fractional digits we can't keep, unless they're just trailing zeros.
 	if len(fracPart) > dp {
 		if strings.TrimRight(fracPart[dp:], "0") != "" {
 			return 0, fmt.Errorf("norm: %q has more than %d nonzero decimal places", orig, dp)
 		}
 		fracPart = fracPart[:dp]
 	}
+	// Read every digit as one number, checking for overflow before each step.
 	var v int64
 	digits := 0
 	for _, part := range [2]string{intPart, fracPart} {
@@ -61,7 +62,7 @@ func ParseFixed(s string, dp int) (int64, error) {
 			v = v*10 + d
 		}
 	}
-	// Scale up for fractional digits the input did not provide.
+	// Pad with zeros for any decimal places the input left off.
 	if pad := dp - len(fracPart); pad > 0 {
 		if v > (1<<63-1)/pow10[pad] {
 			return 0, fmt.Errorf("norm: %q overflows int64 at %d decimal places", orig, dp)
@@ -74,9 +75,9 @@ func ParseFixed(s string, dp int) (int64, error) {
 	return v, nil
 }
 
-// FormatFixed renders a fixed-point int64 with dp decimal places back into
-// a decimal string, e.g. FormatFixed(5012345000000, 8) == "50123.45000000".
-// The fractional part is always dp digits wide. dp must be in [0, 18].
+// FormatFixed is the inverse of ParseFixed: it turns a fixed-point int64 back
+// into a decimal string, e.g. FormatFixed(5012345000000, 8) is "50123.45000000".
+// The fractional part is always dp digits. dp must be 0..18.
 func FormatFixed(v int64, dp int) string {
 	if dp < 0 || dp > 18 {
 		return fmt.Sprintf("!norm: bad decimal places %d", dp)
@@ -85,7 +86,7 @@ func FormatFixed(v int64, dp int) string {
 	uv := uint64(v)
 	if v < 0 {
 		sign = "-"
-		uv = -uv // two's complement: correct even for MinInt64
+		uv = -uv // negate in unsigned space so MinInt64 doesn't overflow
 	}
 	if dp == 0 {
 		return fmt.Sprintf("%s%d", sign, uv)

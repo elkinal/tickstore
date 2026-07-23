@@ -10,14 +10,12 @@ import (
 	"github.com/elkinal/tickstore/internal/norm"
 )
 
-// errVenueError marks frames where Coinbase itself reported an error
-// (e.g. a rejected subscription). These end the session instead of being
-// skipped like ordinary malformed frames.
+// errVenueError is for "error" frames, where Coinbase rejects something (like
+// a bad product id). Unlike a malformed frame, this kills the session.
 var errVenueError = errors.New("coinbase: venue error")
 
-// wireMessage is the superset of fields tickstore reads from Coinbase
-// Exchange websocket feed messages. Coinbase sends one JSON object per
-// frame with a "type" discriminator.
+// wireMessage covers the fields we read from a Coinbase feed frame. Coinbase
+// sends one JSON object per frame, tagged by its "type".
 type wireMessage struct {
 	Type      string `json:"type"`
 	ProductID string `json:"product_id"`
@@ -26,15 +24,13 @@ type wireMessage struct {
 	Price     string `json:"price"`
 	Size      string `json:"size"`
 	Time      string `json:"time"`
-	Message   string `json:"message"` // "error" frame detail
-	Reason    string `json:"reason"`  // "error" frame detail
+	Message   string `json:"message"` // only set on "error" frames
+	Reason    string `json:"reason"`  // only set on "error" frames
 }
 
-// parseMessage decodes one raw feed frame into a normalized trade.
-//
-// It returns (nil, nil) for frames that are valid but not trades
-// (subscription acks, heartbeats), a Trade for "match" and "last_match"
-// frames, and an error for venue-reported errors or malformed input.
+// parseMessage turns one raw frame into a Trade. Frames that are fine but
+// aren't trades (acks, heartbeats) return (nil, nil); bad or rejected frames
+// return an error.
 func parseMessage(raw []byte, tsReceived time.Time) (*norm.Trade, error) {
 	var m wireMessage
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -52,11 +48,9 @@ func parseMessage(raw []byte, tsReceived time.Time) (*norm.Trade, error) {
 	}
 }
 
-// normalize converts a match frame into a norm.Trade.
-//
-// Coinbase reports the MAKER side; the canonical convention is the taker
-// (aggressor) side, so the side is flipped here: a maker "sell" was lifted
-// by a buying taker (uptick) and vice versa.
+// normalize builds a Trade from a match frame. Coinbase gives the maker's
+// side, but we store the taker's, so it's flipped here: a maker "sell" means a
+// taker bought.
 func normalize(m *wireMessage, tsReceived time.Time) (*norm.Trade, error) {
 	var side norm.Side
 	switch m.Side {

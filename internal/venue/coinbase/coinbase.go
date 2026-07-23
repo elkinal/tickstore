@@ -1,5 +1,5 @@
-// Package coinbase streams public market data from the Coinbase Exchange
-// websocket feed and normalizes it into norm types.
+// Package coinbase connects to the Coinbase Exchange websocket feed and turns
+// its trade messages into norm.Trade values.
 package coinbase
 
 import (
@@ -16,30 +16,29 @@ import (
 	"github.com/elkinal/tickstore/internal/venue"
 )
 
-// Name is the canonical venue identifier for Coinbase.
+// Name is Coinbase's id in norm types.
 const Name = "coinbase"
 
-// FeedURL is the public Coinbase Exchange websocket endpoint.
+// FeedURL is Coinbase's public websocket endpoint.
 const FeedURL = "wss://ws-feed.exchange.coinbase.com"
 
 const (
 	dialTimeout = 15 * time.Second
-	readTimeout = 30 * time.Second // heartbeats arrive ~1/s, so silence means a dead peer
+	readTimeout = 30 * time.Second // heartbeats come ~1/s, so 30s of silence means a dead peer
 	backoffMin  = time.Second
 	backoffMax  = time.Minute
-	readLimit   = 8 << 20 // 8 MiB, headroom for L2 snapshots in a later milestone
+	readLimit   = 8 << 20 // 8 MiB, room for the big L2 snapshots a later milestone needs
 )
 
-// Connector streams trades for a fixed set of products from Coinbase.
-// It implements venue.Venue.
+// Connector streams trades for a fixed set of products. It implements venue.Venue.
 type Connector struct {
 	url     string
 	symbols []string
 	log     *slog.Logger
 }
 
-// New returns a Connector for the given product ids (e.g. "BTC-USD").
-// A nil logger defaults to slog.Default().
+// New builds a Connector for the given product ids (e.g. "BTC-USD"). Pass a nil
+// logger to use slog.Default().
 func New(symbols []string, log *slog.Logger) *Connector {
 	if log == nil {
 		log = slog.Default()
@@ -47,12 +46,12 @@ func New(symbols []string, log *slog.Logger) *Connector {
 	return &Connector{url: FeedURL, symbols: symbols, log: log.With("venue", Name)}
 }
 
-// Name implements venue.Venue.
+// Name returns "coinbase".
 func (c *Connector) Name() string { return Name }
 
-// Run implements venue.Venue: it dials the feed, subscribes, and streams
-// normalized trades to h until ctx is canceled, reconnecting on any
-// session failure with exponential backoff plus full jitter.
+// Run keeps a session alive until ctx is canceled. When one drops, it waits a
+// bit and reconnects; the wait doubles each time (capped at backoffMax) and
+// resets once a session actually receives data.
 func (c *Connector) Run(ctx context.Context, h venue.Handler) error {
 	backoff := backoffMin
 	for {
@@ -63,7 +62,9 @@ func (c *Connector) Run(ctx context.Context, h venue.Handler) error {
 		if gotData {
 			backoff = backoffMin
 		}
-		sleep := rand.N(backoff) // full jitter, to avoid synchronized reconnects
+		// Sleep a random slice of the backoff (full jitter) so many clients
+		// don't all reconnect at the same instant.
+		sleep := rand.N(backoff)
 		c.log.Warn("session ended, reconnecting",
 			"error", err, "sleep", sleep.Round(time.Millisecond))
 		select {
@@ -77,16 +78,15 @@ func (c *Connector) Run(ctx context.Context, h venue.Handler) error {
 	}
 }
 
-// subscribeRequest is the wire format of a Coinbase subscribe message.
 type subscribeRequest struct {
 	Type       string   `json:"type"`
 	ProductIDs []string `json:"product_ids"`
 	Channels   []string `json:"channels"`
 }
 
-// session runs one connect-subscribe-read cycle. It returns whether any
-// frame was successfully processed (used to reset backoff) and the error
-// that ended the session.
+// session dials, subscribes, and reads frames until the connection breaks. It
+// reports whether it ever got data (so Run can reset its backoff) and why it
+// stopped.
 func (c *Connector) session(ctx context.Context, h venue.Handler) (gotData bool, err error) {
 	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
 	conn, _, err := websocket.Dial(dialCtx, c.url, nil)
@@ -119,9 +119,9 @@ func (c *Connector) session(ctx context.Context, h venue.Handler) (gotData bool,
 		}
 		trade, err := parseMessage(raw, time.Now())
 		if err != nil {
-			// A venue error frame means the subscription itself is broken
-			// (e.g. bad product id), so end the session. One malformed frame
-			// is not fatal: log it and keep reading.
+			// A venue error means the subscription is broken, so give up and
+			// let Run reconnect. A single bad frame isn't worth dropping the
+			// connection over: log it and move on.
 			if errors.Is(err, errVenueError) {
 				return gotData, err
 			}

@@ -1,17 +1,17 @@
-// Package norm defines the canonical, venue-independent market data types.
+// Package norm holds the canonical market data types. Each venue converts its
+// own wire format into these, so the rest of the app never sees venue quirks.
 //
-// Venue connectors normalize their wire formats into these types as early as
-// possible, so everything downstream (book engine, sink, metrics) speaks only
-// norm. Prices and sizes are fixed-point int64 (see ParseFixed/FormatFixed),
-// never float64, for exact equality and no accumulation drift.
+// Prices and sizes are fixed-point int64, not float64, so two ticks that
+// should be equal always compare equal. See ParseFixed and FormatFixed.
 package norm
 
 import "time"
 
-// Side is the direction of a trade, from the taker (aggressor) perspective.
+// Side is the side of the aggressor (the taker) in a trade.
 type Side uint8
 
-// Side values. SideUnknown is the zero value and must never survive parsing.
+// The possible values of Side. SideUnknown is the zero value; a parsed trade
+// should never have it.
 const (
 	SideUnknown Side = iota
 	Buy
@@ -30,25 +30,24 @@ func (s Side) String() string {
 	}
 }
 
-// Trade is one normalized trade (a match between a taker and a maker).
+// Trade is one normalized trade.
 //
-// Side is the taker side: Buy means a buyer crossed the spread. Venues that
-// report the maker side (Coinbase does) are flipped during normalization so
-// every venue agrees on this convention.
+// Side is the taker's side: Buy means a buyer crossed the spread. Some venues
+// report the maker's side instead (Coinbase does), so their connector flips it
+// before building the Trade.
 type Trade struct {
-	Venue      string    // canonical venue id, e.g. "coinbase"
-	Symbol     string    // venue product id, e.g. "BTC-USD"
-	TsExchange time.Time // venue-reported event time
-	TsReceived time.Time // local time the frame was read, for latency
+	Venue      string    // e.g. "coinbase"
+	Symbol     string    // e.g. "BTC-USD"
+	TsExchange time.Time // when the venue says it happened
+	TsReceived time.Time // when we read it off the socket
 	Price      int64     // fixed-point, PriceDecimals places
 	Size       int64     // fixed-point, SizeDecimals places
 	Side       Side
-	TradeID    string // string because venues disagree on its type
+	TradeID    string // a string because venues can't agree on int vs. string
 }
 
-// PriceDecimals and SizeDecimals are the fixed-point scales for Trade.Price
-// and Trade.Size. v1 uses one global pair; a per-symbol registry arrives with
-// config-driven symbols (milestone 5). 8 places covers every supported venue.
+// Decimal places for the fixed-point Price and Size fields. One global scale
+// for now; per-symbol scales come with config-driven symbols (milestone 5).
 const (
 	PriceDecimals = 8
 	SizeDecimals  = 8

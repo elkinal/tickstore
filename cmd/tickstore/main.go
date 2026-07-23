@@ -1,8 +1,7 @@
 // Command tickstore runs the market data engine.
 //
-// Milestone 1 scope: connect to Coinbase, print normalized trades to
-// stdout, one per line. YAML config, more venues, the book engine and the
-// ClickHouse sink arrive in later milestones.
+// For now that just means: connect to Coinbase and print each trade to stdout.
+// Config, more venues, the order book, and the ClickHouse sink come later.
 package main
 
 import (
@@ -20,10 +19,10 @@ import (
 	"github.com/elkinal/tickstore/internal/venue/coinbase"
 )
 
-// stdoutHandler prints each normalized trade as one line to stdout.
+// stdoutHandler prints each trade as one line.
 type stdoutHandler struct{}
 
-// OnTrade implements venue.Handler.
+// OnTrade prints one trade.
 func (stdoutHandler) OnTrade(t norm.Trade) {
 	latency := t.TsReceived.Sub(t.TsExchange).Round(time.Microsecond)
 	fmt.Printf("%s %s %s %s %s @ %s trade_id=%s latency=%s\n",
