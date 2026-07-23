@@ -37,9 +37,12 @@ func parseMessage(raw []byte, tsReceived time.Time) (*norm.Trade, error) {
 		return nil, fmt.Errorf("coinbase: bad json: %w", err)
 	}
 	switch m.Type {
-	case "match", "last_match":
+	case "match":
 		return normalize(&m, tsReceived)
-	case "subscriptions", "heartbeat":
+	case "last_match", "subscriptions", "heartbeat":
+		// last_match replays the trade from before we connected. Dropping it
+		// avoids duplicates and misleading partial gap samples in the sink;
+		// see docs/DECISIONS.md D11.
 		return nil, nil
 	case "error":
 		return nil, fmt.Errorf("%w: %s (%s)", errVenueError, m.Message, m.Reason)
