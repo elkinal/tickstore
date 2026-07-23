@@ -504,3 +504,34 @@ shared sink. The single-venue flags remain for quick runs.
 
 **Revisit.** Per-venue sink isolation if backpressure coupling bites; a symbol
 alias map if cross-venue queries need a unified symbol.
+
+---
+
+## D20 — Prometheus via package-global collectors; app + ClickHouse in one compose
+*2026-07-23*
+
+**Decision.** `internal/metrics` defines the Prometheus collectors as package
+globals (the idiomatic pattern), so connectors, the book feeds, and the sink
+record directly without threading a metrics object through every call. A small
+`/metrics` server is started from `main` (config `metrics.addr`). The full
+`docker-compose.yml` builds the app (multi-stage Dockerfile -> distroless static)
+and runs it alongside ClickHouse, with `config.docker.yaml` pointing at the
+`clickhouse` service and `depends_on: service_healthy` gating startup.
+
+**Why.**
+- *Global collectors* avoid plumbing a metrics handle through six connectors and
+  the sink; Prometheus client collectors are safe for concurrent use, so this is
+  clean, not a shortcut.
+- *One compose* makes the project runnable with a single command, which is the
+  point of milestone 6 (make it legible). Distroless keeps the image small and
+  attack surface low; the static build needs no libc.
+
+**Cost.**
+- Package-global metrics mean the venue/sink packages now import
+  `internal/metrics`, a small coupling to Prometheus. Acceptable for an app (vs. a
+  reusable library, where injection would be preferable).
+- The Dockerfile pins `golang:1.26`; the toolchain version must track go.mod.
+
+**Revisit.** If any package became a shared library, switch it to an injected
+registry. A Grafana dashboard and Prometheus scrape config would round out the
+observability story.
