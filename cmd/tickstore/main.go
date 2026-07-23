@@ -13,10 +13,12 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/elkinal/tickstore/internal/book"
+	"github.com/elkinal/tickstore/internal/config"
 	"github.com/elkinal/tickstore/internal/norm"
 	"github.com/elkinal/tickstore/internal/sink"
 	"github.com/elkinal/tickstore/internal/venue"
@@ -57,7 +59,9 @@ func main() {
 	chDB := flag.String("clickhouse-db", "tickstore", "ClickHouse database")
 	bookMode := flag.Bool("book", false,
 		"stream L2 order books and print top-of-book, instead of trades")
-	venueName := flag.String("venue", "coinbase", "venue: coinbase or kraken")
+	venueName := flag.String("venue", "coinbase", "venue: coinbase, kraken, or okx")
+	configPath := flag.String("config", "",
+		"YAML config path; runs every listed venue into the sink (overrides the single-venue flags)")
 	flag.Parse()
 	symbols := strings.Split(*symbolsFlag, ",")
 
@@ -66,6 +70,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(),
 		os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if *configPath != "" {
+		runConfig(ctx, *configPath, log)
+		return
+	}
 
 	if *bookMode {
 		runBookMode(ctx, *venueName, symbols, log)
@@ -82,7 +91,7 @@ func main() {
 	chCfg := sink.ClickHouseConfig{
 		Addr: *chAddr, Database: *chDB, Username: *chUser, Password: *chPass,
 	}
-	handler, onShutdown, err := buildHandler(ctx, chCfg, log)
+	handler, onShutdown, err := buildHandler(ctx, chCfg, sink.Config{Logger: log}, log)
 	if err != nil {
 		log.Error("startup failed", "error", err)
 		os.Exit(1)
@@ -97,6 +106,65 @@ func main() {
 	if runErr != nil && ctx.Err() == nil {
 		log.Error("venue failed", "error", runErr)
 		os.Exit(1)
+	}
+	log.Info("shut down cleanly")
+}
+
+// runConfig loads the config and runs every listed venue concurrently, all
+// feeding one shared sink. Each venue runs in its own goroutine so one venue
+// failing can't take down the others.
+func runConfig(ctx context.Context, path string, log *slog.Logger) {
+	cfg, err := config.Load(path)
+	if err != nil {
+		log.Error("config", "error", err)
+		os.Exit(1)
+	}
+
+	chCfg := sink.ClickHouseConfig{
+		Addr:     cfg.ClickHouse.Addr,
+		Database: cfg.ClickHouse.Database,
+		Username: cfg.ClickHouse.Username,
+		Password: cfg.ClickHouse.Password,
+	}
+	sinkCfg := sink.Config{
+		MaxRows:  cfg.Sink.MaxRows,
+		MaxDelay: time.Duration(cfg.Sink.MaxDelay),
+		Buffer:   cfg.Sink.Buffer,
+	}
+	handler, onShutdown, err := buildHandler(ctx, chCfg, sinkCfg, log)
+	if err != nil {
+		log.Error("startup failed", "error", err)
+		os.Exit(1)
+	}
+
+	// Build every connector before starting, so a bad venue name fails fast.
+	conns := make([]venue.Venue, 0, len(cfg.Venues))
+	for _, v := range cfg.Venues {
+		conn, err := tradeConnector(v.Name, v.Symbols, log)
+		if err != nil {
+			log.Error("startup failed", "error", err)
+			os.Exit(1)
+		}
+		conns = append(conns, conn)
+	}
+
+	var wg sync.WaitGroup
+	for i, conn := range conns {
+		conn := conn
+		symbols := cfg.Venues[i].Symbols
+		log.Info("starting", "venue", conn.Name(), "symbols", symbols)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := conn.Run(ctx, handler); err != nil && ctx.Err() == nil {
+				log.Error("venue failed", "venue", conn.Name(), "error", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if onShutdown != nil {
+		onShutdown()
 	}
 	log.Info("shut down cleanly")
 }
@@ -170,7 +238,7 @@ func (p *bookPrinter) OnBook(b *book.Book) {
 // buildHandler returns the trade destination and an optional shutdown hook that
 // must run after the connector stops. With no ClickHouse address it's the
 // stdout printer and there's nothing to flush.
-func buildHandler(ctx context.Context, cfg sink.ClickHouseConfig, log *slog.Logger) (venue.Handler, func(), error) {
+func buildHandler(ctx context.Context, cfg sink.ClickHouseConfig, sinkCfg sink.Config, log *slog.Logger) (venue.Handler, func(), error) {
 	if cfg.Addr == "" {
 		return stdoutHandler{}, nil, nil
 	}
@@ -183,7 +251,8 @@ func buildHandler(ctx context.Context, cfg sink.ClickHouseConfig, log *slog.Logg
 		ch.Close()
 		return nil, nil, err
 	}
-	batcher := sink.NewBatcher(ch, sink.Config{Logger: log})
+	sinkCfg.Logger = log
+	batcher := sink.NewBatcher(ch, sinkCfg)
 	log.Info("writing trades to clickhouse", "addr", cfg.Addr)
 
 	flush := func() {

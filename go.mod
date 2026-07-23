@@ -5,6 +5,7 @@ go 1.26.5
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.47.0
 	github.com/coder/websocket v1.8.15
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

@@ -1,0 +1,23 @@
+# Example tickstore config. Run with: tickstore -config config.example.yaml
+#
+# Every listed venue streams concurrently into the same sink. Each venue uses
+# its own symbol format (Coinbase BTC-USD, Kraken BTC/USD, OKX BTC-USDT).
+
+clickhouse:
+  addr: 127.0.0.1:9000 # empty -> print trades to stdout instead
+  database: tickstore
+  username: tickstore
+  password: tickstore
+
+sink:
+  max_rows: 10000 # flush a batch at this many rows...
+  max_delay: 250ms # ...or after this long, whichever comes first
+  buffer: 20000 # in-flight channel capacity (backpressure bound)
+
+venues:
+  - name: coinbase
+    symbols: [BTC-USD, ETH-USD]
+  - name: kraken
+    symbols: [BTC/USD, ETH/USD]
+  - name: okx
+    symbols: [BTC-USDT, ETH-USDT]
