@@ -37,25 +37,27 @@ func ParseFixed(s string, dp int) (int64, error) {
 	if intPart == "" && fracPart == "" {
 		return 0, fmt.Errorf("norm: empty number %q", orig)
 	}
-	// Reject fractional digits we can't keep, unless they're just trailing zeros.
+	// Reject junk characters up front, so the checks below can assume digits
+	// and their errors say what's actually wrong.
+	if err := checkDigits(intPart, orig); err != nil {
+		return 0, err
+	}
+	if err := checkDigits(fracPart, orig); err != nil {
+		return 0, err
+	}
+	// Drop fractional digits past dp, but only if they're zeros. A nonzero
+	// digit there is real precision we'd be throwing away, so error instead.
 	if len(fracPart) > dp {
 		if strings.TrimRight(fracPart[dp:], "0") != "" {
 			return 0, fmt.Errorf("norm: %q has more than %d nonzero decimal places", orig, dp)
 		}
 		fracPart = fracPart[:dp]
 	}
-	// Read every digit as one number, checking for overflow before each step.
+	// Read every digit into one integer, checking for overflow before each step.
 	var v int64
-	digits := 0
 	for _, part := range [2]string{intPart, fracPart} {
-		for _, c := range []byte(part) {
-			if c < '0' || c > '9' {
-				return 0, fmt.Errorf("norm: invalid character %q in number %q", c, orig)
-			}
-			if digits++; digits > 19 {
-				return 0, fmt.Errorf("norm: %q overflows int64 at %d decimal places", orig, dp)
-			}
-			d := int64(c - '0')
+		for i := 0; i < len(part); i++ {
+			d := int64(part[i] - '0')
 			if v > (1<<63-1-d)/10 {
 				return 0, fmt.Errorf("norm: %q overflows int64 at %d decimal places", orig, dp)
 			}
@@ -75,12 +77,27 @@ func ParseFixed(s string, dp int) (int64, error) {
 	return v, nil
 }
 
+// checkDigits returns an error if s holds anything but ASCII digits. orig is
+// the original input, used only for the error message.
+func checkDigits(s, orig string) error {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return fmt.Errorf("norm: invalid character %q in number %q", s[i], orig)
+		}
+	}
+	return nil
+}
+
 // FormatFixed is the inverse of ParseFixed: it turns a fixed-point int64 back
 // into a decimal string, e.g. FormatFixed(5012345000000, 8) is "50123.45000000".
-// The fractional part is always dp digits. dp must be 0..18.
+// The fractional part is always dp digits.
+//
+// dp must be 0..18. It's always a compile-time constant at call sites, so an
+// out-of-range value is a programmer bug, and this panics rather than return a
+// bogus string that could slip into output unnoticed.
 func FormatFixed(v int64, dp int) string {
 	if dp < 0 || dp > 18 {
-		return fmt.Sprintf("!norm: bad decimal places %d", dp)
+		panic(fmt.Sprintf("norm: FormatFixed decimal places %d out of range [0, 18]", dp))
 	}
 	sign := ""
 	uv := uint64(v)
