@@ -442,3 +442,65 @@ a depth-limited book.
 
 **Revisit.** For deeper books or higher-throughput pairs, resync a single symbol
 instead of the whole connection, and consider a sorted structure over the map.
+
+---
+
+## D18 — OKX book integrity via seqId/prevSeqId linkage; public checksum unused
+*2026-07-23*
+
+**Context.** OKX v5's `books` channel gives each frame a `seqId` and a
+`prevSeqId`, and a `checksum`. Probed live: the public `books` checksum is always
+`0` (real checksums need the auth-only `-l2-tbt` channels, which the non-goals
+forbid), but the seqId linkage is clean — each update's `prevSeqId` equals the
+previous `seqId`, and a snapshot starts at `prevSeqId = -1`.
+
+**Decision.** Use the seqId linkage as the integrity/gap mechanism: an update is
+contiguous only if its `prevSeqId` equals the last applied `seqId`; a break means
+we missed an update, so resync from a fresh snapshot (reconnect). Ignore the
+(always-zero) checksum. The engine still gets a monotonic seq; OKX gap detection
+lives in the connector because OKX's seqIds aren't per-book contiguous.
+
+**Why.** This is genuine **live** sequence-based gap detection — the counterpart
+to Kraken's live checksum validation. Across the three venues we now exercise both
+integrity mechanisms live: Kraken proves the checksum path, OKX proves the
+seq-gap path, and the engine's own seq detection is covered by property tests.
+
+**Cost.** No checksum cross-check on OKX (the feed doesn't offer a usable one).
+The seqId linkage is trusted instead — weaker than a content checksum, but it's
+what the public feed provides, and it does catch dropped updates.
+
+**Revisit.** If content-level validation on OKX ever matters, the tick-by-tick
+channels (with real checksums) require authentication — the same scoped-exception
+call as Coinbase's D15.
+
+---
+
+## D19 — Config-driven multi-venue: one shared sink, isolated goroutines
+*2026-07-23*
+
+**Decision.** `internal/config` loads a YAML file (ClickHouse, sink tuning, and a
+list of venues each with its own symbols). `tickstore -config file.yaml` runs
+every listed venue concurrently, each in its own goroutine, all feeding one
+shared sink. The single-venue flags remain for quick runs.
+
+**Why.**
+- *Config over flags* for the real workload: venues use different symbol formats
+  (Coinbase `BTC-USD`, Kraken `BTC/USD`, OKX `BTC-USDT`), so a per-venue symbol
+  list is the natural shape, and it's declarative/reproducible.
+- *One shared sink* means one batching/backpressure path for all venues; the
+  Batcher's channel is safe for concurrent `OnTrade` from many goroutines (D13).
+- *Isolated goroutines* satisfy the SPEC reliability requirement: a venue dying
+  logs and (via `RunWithReconnect`) keeps retrying without touching the others;
+  shutdown cancels all, then flushes the sink once.
+
+**Cost.**
+- All venues share one sink, so a slow ClickHouse backpressures every venue at
+  once (D13's shared-sink caveat, now real with three venues). Per-venue sinks or
+  an internal fan-in would isolate them.
+- Config validates structure but not venue names (to stay decoupled from the
+  venue packages); an unknown name fails at startup in `main`, not at load.
+- Cross-venue symbol normalization is deferred: symbols are still the venue's
+  native format, so the same instrument reads as three different `symbol` values.
+
+**Revisit.** Per-venue sink isolation if backpressure coupling bites; a symbol
+alias map if cross-venue queries need a unified symbol.
