@@ -291,3 +291,67 @@ The DB write sits behind an `Inserter` interface.
 **Revisit.** If one venue's volume outgrows serial inserts, pipeline flushing.
 Prometheus counters (batch size, flush latency, retries) land with the metrics
 package in milestone 6.
+
+---
+
+## D14 — Order book engine is venue-agnostic; snapshot + replay for resync
+*2026-07-23*
+
+**Decision.** `internal/book` consumes only `norm.BookSnapshot` and
+`norm.BookUpdate`, never venue wire formats. A `Book` keeps each side as a
+`map[price]size` (O(1) delta apply; sorted views computed on demand), applies
+updates in sequence order, detects gaps by sequence number, and recovers by
+reseeding from a snapshot and replaying the updates buffered since.
+
+**Why.**
+- *Venue-agnostic* means the hard, correctness-critical logic is written and
+  tested once, and every venue (Coinbase now, Kraken/OKX later) reuses it. It
+  also makes the engine fully testable with synthetic streams — no live feed
+  needed — which is how the property tests reach real confidence.
+- *map per side* keeps the hot path (applying deltas) O(1). Views (top-of-book,
+  depth-N) are for validation/metrics, not the hot path, so sorting them on
+  demand is fine.
+- *Snapshot + replay* is the standard, correct way to recover a delta-based book:
+  a snapshot gives a known-good base at a known sequence, and buffered updates
+  newer than it replay to catch up. Property tests confirm both shuffled-buffer
+  replay and post-gap resync converge to the in-order reference.
+
+**Cost.** Views cost O(n log n) per call (sorting the side). Fine for validation
+cadence; a real hot top-of-book would maintain a sorted structure. Books are not
+concurrency-safe — one goroutine per book (matches the connector's read loop).
+
+**Revisit.** Checksum validation (Kraken/OKX provide one) plugs in as a per-venue
+hook in milestone 4; the seam is the snapshot/update boundary.
+
+---
+
+## D15 — Coinbase books use the public level2_batch feed; no live gap detection
+*2026-07-23*
+
+**Context.** The engine (D14) detects gaps by sequence number. Coinbase's
+sequenced/order-level channels (`level2`, `level3`, `full`) now *require
+authentication*, which the SPEC forbids (non-goal: no authenticated endpoints).
+Probed live and confirmed. The only public book channel is `level2_batch`: a
+full snapshot followed by batched `l2update` deltas — with **no sequence
+numbers**.
+
+**Decision.** Use `level2_batch`. The `BookConnector` assigns a monotonic seq
+per book (snapshot, then one per change), so the engine sees a contiguous stream
+and its gap detection never false-fires. Live recovery is snapshot-driven: a
+reconnect yields a fresh snapshot that reseeds the book.
+
+**Why.** It's the only public option, and it still exercises the full engine
+(snapshot seeding, delta application, top-of-book, resync-on-reconnect). Seq-based
+gap detection is proven by the property tests and will run *live* on Kraken
+(milestone 4), which sequences its feed and adds a checksum — exactly why the SPEC
+picks Kraken to prove the abstraction.
+
+**Cost.** No live gap detection for Coinbase specifically: if the feed silently
+drops an update between snapshots, we can't tell until the next reconnect. Bounded
+by how often we reconnect. Also note the book's `side` reuses `norm.Side` with
+bid/ask meaning (buy = bid), *not* the taker convention trades use (D2) — no flip,
+because level2 "buy"/"sell" name the resting side directly.
+
+**Revisit.** Kraken/OKX bring real live gap detection. If Coinbase book fidelity
+ever matters more, a periodic forced resync (drop + re-snapshot on a timer) would
+bound staleness without auth.
