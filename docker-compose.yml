@@ -10,6 +10,12 @@ services:
     ports:
       - "9000:9000" # native protocol (used by the app)
       - "8123:8123" # http (handy for curl/clickhouse-client)
+    environment:
+      # Without explicit credentials the image locks the default user to
+      # localhost only, so give the app a real network user. Dev creds only.
+      CLICKHOUSE_USER: tickstore
+      CLICKHOUSE_PASSWORD: tickstore
+      CLICKHOUSE_DB: tickstore
     volumes:
       # Run our schema on first startup; CREATE ... IF NOT EXISTS is idempotent.
       - ./internal/sink/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro

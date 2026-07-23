@@ -58,7 +58,9 @@ func OpenClickHouse(ctx context.Context, cfg ClickHouseConfig) (*ClickHouse, err
 // Migrate creates the database and trades table if they don't exist. It's
 // idempotent, so it's safe to run on every startup.
 func (c *ClickHouse) Migrate(ctx context.Context) error {
-	for _, stmt := range strings.Split(schemaSQL, ";") {
+	// Strip line comments first: a comment may itself contain a ';', which
+	// would otherwise split into a comment-only (empty) statement.
+	for _, stmt := range strings.Split(stripLineComments(schemaSQL), ";") {
 		if strings.TrimSpace(stmt) == "" {
 			continue
 		}
@@ -67,6 +69,20 @@ func (c *ClickHouse) Migrate(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// stripLineComments removes "-- ..." comments so the naive ';' split below is
+// safe. Our schema has no "--" inside string literals, so this is sufficient.
+func stripLineComments(sql string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(sql, "\n") {
+		if i := strings.Index(line, "--"); i >= 0 {
+			line = line[:i]
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // Insert writes one batch. It builds a fresh batch each call, so a failed send

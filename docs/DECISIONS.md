@@ -245,7 +245,11 @@ driver wants a `shopspring/decimal` value for Decimal columns, which is a new
 dependency outside the allowed list — not worth it to save a `/1e8` in queries.
 
 **Cost.** Every query must know the scale and divide. Slightly less ergonomic for
-ad-hoc analysis.
+ad-hoc analysis. Sharper: a product of two columns is scaled by 1e16 and
+overflows Int64 for large trades, so aggregates like VWAP must cast to Int128
+first (`sum(toInt128(price) * size) / sum(toInt128(size)) / 1e8`). A naive
+`sum(price*size)` silently returns garbage (observed: a negative VWAP on the
+first live run). The eventual Decimal view (below) would also hide this.
 
 **Revisit.** When per-symbol scales arrive (D10, milestone 5), or if query
 ergonomics matter enough, expose a `Decimal` view (`CAST(price AS Decimal64(8)) /

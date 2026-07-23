@@ -49,6 +49,9 @@ func main() {
 		"comma-separated Coinbase product ids")
 	chAddr := flag.String("clickhouse", "",
 		"ClickHouse host:port; if empty, trades are printed to stdout")
+	chUser := flag.String("clickhouse-user", "tickstore", "ClickHouse username")
+	chPass := flag.String("clickhouse-password", "tickstore", "ClickHouse password")
+	chDB := flag.String("clickhouse-db", "tickstore", "ClickHouse database")
 	flag.Parse()
 	symbols := strings.Split(*symbolsFlag, ",")
 
@@ -59,7 +62,10 @@ func main() {
 	defer stop()
 
 	// Pick the destination for trades. onShutdown flushes it, if needed.
-	handler, onShutdown, err := buildHandler(ctx, *chAddr, log)
+	chCfg := sink.ClickHouseConfig{
+		Addr: *chAddr, Database: *chDB, Username: *chUser, Password: *chPass,
+	}
+	handler, onShutdown, err := buildHandler(ctx, chCfg, log)
 	if err != nil {
 		log.Error("startup failed", "error", err)
 		os.Exit(1)
@@ -81,12 +87,12 @@ func main() {
 // buildHandler returns the trade destination and an optional shutdown hook that
 // must run after the connector stops. With no ClickHouse address it's the
 // stdout printer and there's nothing to flush.
-func buildHandler(ctx context.Context, chAddr string, log *slog.Logger) (venue.Handler, func(), error) {
-	if chAddr == "" {
+func buildHandler(ctx context.Context, cfg sink.ClickHouseConfig, log *slog.Logger) (venue.Handler, func(), error) {
+	if cfg.Addr == "" {
 		return stdoutHandler{}, nil, nil
 	}
 
-	ch, err := sink.OpenClickHouse(ctx, sink.ClickHouseConfig{Addr: chAddr, Database: "default"})
+	ch, err := sink.OpenClickHouse(ctx, cfg)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -95,7 +101,7 @@ func buildHandler(ctx context.Context, chAddr string, log *slog.Logger) (venue.H
 		return nil, nil, err
 	}
 	batcher := sink.NewBatcher(ch, sink.Config{Logger: log})
-	log.Info("writing trades to clickhouse", "addr", chAddr)
+	log.Info("writing trades to clickhouse", "addr", cfg.Addr)
 
 	flush := func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)

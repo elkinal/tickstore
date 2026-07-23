@@ -22,7 +22,9 @@ func TestClickHouseRoundTrip(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	ch, err := OpenClickHouse(ctx, ClickHouseConfig{Addr: addr, Database: "default"})
+	ch, err := OpenClickHouse(ctx, ClickHouseConfig{
+		Addr: addr, Database: "tickstore", Username: "tickstore", Password: "tickstore",
+	})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -31,8 +33,11 @@ func TestClickHouseRoundTrip(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	// Unique marker so this run's rows don't collide with any other's.
+	// Unique marker so this run's rows don't collide with any other's, and clean
+	// them up afterward so the test doesn't pollute the shared table.
 	marker := fmt.Sprintf("itest-%d", time.Now().UnixNano())
+	defer ch.conn.Exec(context.Background(),
+		"ALTER TABLE tickstore.trades DELETE WHERE venue = ? SETTINGS mutations_sync = 1", marker)
 	now := time.Now().UTC().Truncate(time.Nanosecond)
 	in := []norm.Trade{
 		{Venue: marker, Symbol: "BTC-USD", TsExchange: now, TsReceived: now,

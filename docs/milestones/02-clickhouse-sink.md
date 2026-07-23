@@ -45,13 +45,18 @@ Coinbase trades into a dockerized ClickHouse) pending a running Docker engine.
     CLICKHOUSE_ADDR=127.0.0.1:9000 go test ./internal/sink/ -run ClickHouse
     go run ./cmd/tickstore -clickhouse 127.0.0.1:9000 -symbols BTC-USD
 
-Example VWAP query (accounting for the scale-8 fixed point):
+Example VWAP query (accounting for the scale-8 fixed point). Note the
+`toInt128`: `price` and `size` are each scaled by 1e8, so their product is
+scaled by 1e16 and overflows Int64 for large trades — cast to Int128 first.
 
     SELECT symbol,
-           sum(price * size) / sum(size) / 1e8 AS vwap
+           sum(toInt128(price) * size) / sum(toInt128(size)) / 1e8 AS vwap
     FROM tickstore.trades
     WHERE ts_exchange > now() - INTERVAL 1 MINUTE
     GROUP BY symbol;
+
+Verified on a live 20s run (BTC-USD, ETH-USD): 120 trades ingested, VWAP landed
+between the min and max trade price for each symbol, fixed-point values exact.
 
 ## Open questions for the author
 
