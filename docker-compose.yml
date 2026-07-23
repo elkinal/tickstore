@@ -1,8 +1,8 @@
-# Local ClickHouse for development and the integration test. The full app +
-# ClickHouse compose comes in milestone 6; this is just the database.
+# The full stack: ClickHouse plus the tickstore app streaming three venues.
 #
-#   docker compose up -d
-#   CLICKHOUSE_ADDR=127.0.0.1:9000 go test ./internal/sink/ -run ClickHouse
+#   docker compose up -d --build   # run everything
+#   curl localhost:9090/metrics    # app metrics
+#   docker compose up -d clickhouse  # just the database (for local `go run`/tests)
 #
 services:
   clickhouse:
@@ -28,3 +28,14 @@ services:
       interval: 3s
       timeout: 2s
       retries: 20
+
+  tickstore:
+    build: .
+    depends_on:
+      clickhouse:
+        condition: service_healthy # wait for the DB before connecting
+    volumes:
+      - ./config.docker.yaml:/etc/tickstore/config.yaml:ro
+    ports:
+      - "9090:9090" # Prometheus /metrics
+    restart: unless-stopped

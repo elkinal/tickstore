@@ -1,0 +1,24 @@
+# Config used by the tickstore container in docker-compose. Same as
+# config.example.yaml, but ClickHouse is reached by its compose service name.
+
+clickhouse:
+  addr: clickhouse:9000
+  database: tickstore
+  username: tickstore
+  password: tickstore
+
+sink:
+  max_rows: 10000
+  max_delay: 250ms
+  buffer: 20000
+
+metrics:
+  addr: ":9090"
+
+venues:
+  - name: coinbase
+    symbols: [BTC-USD, ETH-USD]
+  - name: kraken
+    symbols: [BTC/USD, ETH/USD]
+  - name: okx
+    symbols: [BTC-USDT, ETH-USDT]
