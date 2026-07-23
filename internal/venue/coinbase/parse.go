@@ -2,12 +2,18 @@ package coinbase
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/elkinal/tickstore/internal/norm"
 )
+
+// errVenueError marks frames where Coinbase itself reported an error
+// (e.g. a rejected subscription). These end the session instead of being
+// skipped like ordinary malformed frames.
+var errVenueError = errors.New("coinbase: venue error")
 
 // wireMessage is the superset of fields tickstore reads from Coinbase
 // Exchange websocket feed messages. Coinbase sends one JSON object per
@@ -41,7 +47,7 @@ func parseMessage(raw []byte, tsReceived time.Time) (*norm.Trade, error) {
 	case "subscriptions", "heartbeat":
 		return nil, nil
 	case "error":
-		return nil, fmt.Errorf("coinbase: venue error: %s (%s)", m.Message, m.Reason)
+		return nil, fmt.Errorf("%w: %s (%s)", errVenueError, m.Message, m.Reason)
 	default:
 		return nil, fmt.Errorf("coinbase: unexpected message type %q", m.Type)
 	}
