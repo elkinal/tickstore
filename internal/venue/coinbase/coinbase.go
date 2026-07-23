@@ -22,17 +22,12 @@ const Name = "coinbase"
 // FeedURL is the public Coinbase Exchange websocket endpoint.
 const FeedURL = "wss://ws-feed.exchange.coinbase.com"
 
-// Reconnect/backoff and liveness tuning.
 const (
 	dialTimeout = 15 * time.Second
-	// readTimeout bounds one Read call. The heartbeat channel delivers a
-	// frame per product every second, so a quiet 30s means a dead peer.
-	readTimeout = 30 * time.Second
+	readTimeout = 30 * time.Second // heartbeats arrive ~1/s, so silence means a dead peer
 	backoffMin  = time.Second
 	backoffMax  = time.Minute
-	// readLimit is the max accepted frame size. Match frames are tiny but
-	// L2 snapshots (a later milestone) run to megabytes; 8 MiB is safe.
-	readLimit = 8 << 20
+	readLimit   = 8 << 20 // 8 MiB, headroom for L2 snapshots in a later milestone
 )
 
 // Connector streams trades for a fixed set of products from Coinbase.
@@ -68,9 +63,7 @@ func (c *Connector) Run(ctx context.Context, h venue.Handler) error {
 		if gotData {
 			backoff = backoffMin
 		}
-		// Full jitter: sleep a uniform random slice of the current cap to
-		// avoid thundering-herd reconnects.
-		sleep := rand.N(backoff)
+		sleep := rand.N(backoff) // full jitter, to avoid synchronized reconnects
 		c.log.Warn("session ended, reconnecting",
 			"error", err, "sleep", sleep.Round(time.Millisecond))
 		select {
@@ -107,9 +100,7 @@ func (c *Connector) session(ctx context.Context, h venue.Handler) (gotData bool,
 	sub, err := json.Marshal(subscribeRequest{
 		Type:       "subscribe",
 		ProductIDs: c.symbols,
-		// matches carries trades; heartbeat keeps the read loop's timeout
-		// honest during quiet markets.
-		Channels: []string{"matches", "heartbeat"},
+		Channels:   []string{"matches", "heartbeat"}, // trades, plus heartbeats for liveness
 	})
 	if err != nil {
 		return false, fmt.Errorf("marshal subscribe: %w", err)
@@ -128,9 +119,9 @@ func (c *Connector) session(ctx context.Context, h venue.Handler) (gotData bool,
 		}
 		trade, err := parseMessage(raw, time.Now())
 		if err != nil {
-			// A venue-reported error frame means the subscription itself is
-			// broken (e.g. bad product id): end the session. Anything else
-			// is one bad frame: log it and keep reading.
+			// A venue error frame means the subscription itself is broken
+			// (e.g. bad product id), so end the session. One malformed frame
+			// is not fatal: log it and keep reading.
 			if errors.Is(err, errVenueError) {
 				return gotData, err
 			}

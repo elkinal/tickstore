@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/elkinal/tickstore/internal/norm"
 	"github.com/elkinal/tickstore/internal/venue/coinbase"
@@ -24,6 +25,7 @@ type stdoutHandler struct{}
 
 // OnTrade implements venue.Handler.
 func (stdoutHandler) OnTrade(t norm.Trade) {
+	latency := t.TsReceived.Sub(t.TsExchange).Round(time.Microsecond)
 	fmt.Printf("%s %s %s %s %s @ %s trade_id=%s latency=%s\n",
 		t.TsExchange.Format("15:04:05.000000"),
 		t.Venue,
@@ -32,7 +34,7 @@ func (stdoutHandler) OnTrade(t norm.Trade) {
 		norm.FormatFixed(t.Size, norm.SizeDecimals),
 		norm.FormatFixed(t.Price, norm.PriceDecimals),
 		t.TradeID,
-		t.TsReceived.Sub(t.TsExchange).Round(1000),
+		latency,
 	)
 }
 

@@ -26,9 +26,8 @@ type wireMessage struct {
 	Price     string `json:"price"`
 	Size      string `json:"size"`
 	Time      string `json:"time"`
-	// Message and Reason carry the details of "error" frames.
-	Message string `json:"message"`
-	Reason  string `json:"reason"`
+	Message   string `json:"message"` // "error" frame detail
+	Reason    string `json:"reason"`  // "error" frame detail
 }
 
 // parseMessage decodes one raw feed frame into a normalized trade.
