@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/elkinal/tickstore/internal/book"
 	"github.com/elkinal/tickstore/internal/norm"
 	"github.com/elkinal/tickstore/internal/sink"
 	"github.com/elkinal/tickstore/internal/venue"
@@ -52,6 +53,8 @@ func main() {
 	chUser := flag.String("clickhouse-user", "tickstore", "ClickHouse username")
 	chPass := flag.String("clickhouse-password", "tickstore", "ClickHouse password")
 	chDB := flag.String("clickhouse-db", "tickstore", "ClickHouse database")
+	bookMode := flag.Bool("book", false,
+		"stream L2 order books and print top-of-book, instead of trades")
 	flag.Parse()
 	symbols := strings.Split(*symbolsFlag, ",")
 
@@ -60,6 +63,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(),
 		os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if *bookMode {
+		runBookMode(ctx, symbols, log)
+		return
+	}
 
 	// Pick the destination for trades. onShutdown flushes it, if needed.
 	chCfg := sink.ClickHouseConfig{
@@ -82,6 +90,47 @@ func main() {
 		os.Exit(1)
 	}
 	log.Info("shut down cleanly")
+}
+
+// runBookMode streams L2 order books and prints each book's top-of-book,
+// throttled to once a second per symbol.
+func runBookMode(ctx context.Context, symbols []string, log *slog.Logger) {
+	printer := &bookPrinter{last: map[string]time.Time{}, every: time.Second}
+	log.Info("starting book mode", "symbols", symbols)
+	err := coinbase.NewBook(symbols, printer, log).Run(ctx)
+	if err != nil && ctx.Err() == nil {
+		log.Error("book feed failed", "error", err)
+		os.Exit(1)
+	}
+	log.Info("shut down cleanly")
+}
+
+// bookPrinter prints top-of-book, at most once per `every` per symbol so a busy
+// feed doesn't flood the terminal.
+type bookPrinter struct {
+	last  map[string]time.Time
+	every time.Duration
+}
+
+// OnBook implements coinbase.BookObserver. It runs on the feed's read loop.
+func (p *bookPrinter) OnBook(b *book.Book) {
+	now := time.Now()
+	if t, ok := p.last[b.Symbol()]; ok && now.Sub(t) < p.every {
+		return
+	}
+	p.last[b.Symbol()] = now
+
+	bid, ask, ok := b.TopOfBook()
+	if !ok {
+		return
+	}
+	gaps, resyncs, _ := b.Stats()
+	fmt.Printf("%s %s  bid %s x %s | ask %s x %s  spread=%s seq=%d gaps=%d resyncs=%d\n",
+		b.Venue(), b.Symbol(),
+		norm.FormatFixed(bid.Price, norm.PriceDecimals), norm.FormatFixed(bid.Size, norm.SizeDecimals),
+		norm.FormatFixed(ask.Price, norm.PriceDecimals), norm.FormatFixed(ask.Size, norm.SizeDecimals),
+		norm.FormatFixed(ask.Price-bid.Price, norm.PriceDecimals),
+		b.LastSeq(), gaps, resyncs)
 }
 
 // buildHandler returns the trade destination and an optional shutdown hook that

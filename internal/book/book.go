@@ -127,6 +127,10 @@ func (b *Book) applyDelta(side norm.Side, price, size int64) {
 	}
 }
 
+// Venue and Symbol identify the book.
+func (b *Book) Venue() string  { return b.venue }
+func (b *Book) Symbol() string { return b.symbol }
+
 // Synced reports whether the book is seeded and gap-free.
 func (b *Book) Synced() bool { return b.synced }
 

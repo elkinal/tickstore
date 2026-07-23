@@ -44,6 +44,9 @@ func TestParseMessageGolden(t *testing.T) {
 	}
 	for _, inPath := range inputs {
 		name := strings.TrimSuffix(filepath.Base(inPath), ".input.json")
+		if strings.HasPrefix(name, "level2_") {
+			continue // level2 frames belong to TestParseLevel2Golden
+		}
 		t.Run(name, func(t *testing.T) {
 			raw, err := os.ReadFile(inPath)
 			if err != nil {
