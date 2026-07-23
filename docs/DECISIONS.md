@@ -352,6 +352,33 @@ by how often we reconnect. Also note the book's `side` reuses `norm.Side` with
 bid/ask meaning (buy = bid), *not* the taker convention trades use (D2) — no flip,
 because level2 "buy"/"sell" name the resting side directly.
 
-**Revisit.** Kraken/OKX bring real live gap detection. If Coinbase book fidelity
-ever matters more, a periodic forced resync (drop + re-snapshot on a timer) would
-bound staleness without auth.
+**Workarounds evaluated (and why they don't give public gap detection).**
+- *REST reconciliation.* The public REST book (`/products/{id}/book?level=2`) is
+  unauthenticated and carries a global `sequence`. Tempting: fetch it periodically
+  and diff against the in-memory book. It fails as gap *detection* because there's
+  no shared key to align on — `level2_batch` exposes no sequence, so REST's
+  sequence can't be mapped to the ws stream. Content diffing is noise: the book
+  changes constantly and the REST fetch is always newer than the last ws update,
+  so the two legitimately differ every time from timing skew, not from missed
+  updates. It can only be used as a snapshot *source* (a resync), never detection.
+- *matches sequence.* The public `matches` (trade) channel does carry sequence
+  numbers, but that's the trade stream in a different sequence space — no help for
+  book-update gaps.
+- *Forced periodic resync.* Re-snapshot on a timer. Bounds staleness but detects
+  nothing, and natural reconnects already reseed, so marginal.
+- *Authenticate (read-only key).* The only real fix — unlocks the sequenced
+  `level2`/`full`. Rejected: breaks the public-only / no-auth principle for a
+  capability Kraken already proves live next.
+
+Conclusion: real live gap detection is not achievable on Coinbase's public feed.
+It's not an architectural gap — the engine's detection is proven by tests and runs
+live on Kraken (D14 seam). Left as-is deliberately.
+
+**Cost.** No live gap detection for Coinbase specifically: if the feed silently
+drops an update between snapshots, we can't tell until the next reconnect. Bounded
+by how often we reconnect. Also note the book's `side` reuses `norm.Side` with
+bid/ask meaning (buy = bid), *not* the taker convention trades use (D2) — no flip,
+because level2 "buy"/"sell" name the resting side directly.
+
+**Revisit.** Only if Coinbase book fidelity becomes important on its own — then a
+read-only authenticated key is the honest path, accepted as a scoped exception.
