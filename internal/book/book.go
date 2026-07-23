@@ -127,6 +127,34 @@ func (b *Book) applyDelta(side norm.Side, price, size int64) {
 	}
 }
 
+// Trim keeps only the best n levels per side (highest bids, lowest asks),
+// dropping the rest. Depth-limited feeds (e.g. Kraken depth=10) only maintain a
+// window, so trimming keeps the book identical to the venue's view instead of
+// letting levels that left the window linger as stale entries.
+func (b *Book) Trim(n int) {
+	trimSide(b.bids, n, true)
+	trimSide(b.asks, n, false)
+}
+
+func trimSide(side map[int64]int64, n int, desc bool) {
+	if len(side) <= n {
+		return
+	}
+	prices := make([]int64, 0, len(side))
+	for p := range side {
+		prices = append(prices, p)
+	}
+	sort.Slice(prices, func(i, j int) bool {
+		if desc {
+			return prices[i] > prices[j]
+		}
+		return prices[i] < prices[j]
+	})
+	for _, p := range prices[n:] {
+		delete(side, p)
+	}
+}
+
 // Venue and Symbol identify the book.
 func (b *Book) Venue() string  { return b.venue }
 func (b *Book) Symbol() string { return b.symbol }

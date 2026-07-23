@@ -67,7 +67,7 @@ func main() {
 	defer stop()
 
 	if *bookMode {
-		runBookMode(ctx, symbols, log) // book mode is Coinbase-only for now
+		runBookMode(ctx, *venueName, symbols, log)
 		return
 	}
 
@@ -112,13 +112,22 @@ func tradeConnector(name string, symbols []string, log *slog.Logger) (venue.Venu
 	}
 }
 
-// runBookMode streams L2 order books and prints each book's top-of-book,
-// throttled to once a second per symbol.
-func runBookMode(ctx context.Context, symbols []string, log *slog.Logger) {
+// runBookMode streams L2 order books for the named venue and prints each book's
+// top-of-book, throttled to once a second per symbol.
+func runBookMode(ctx context.Context, venueName string, symbols []string, log *slog.Logger) {
 	printer := &bookPrinter{last: map[string]time.Time{}, every: time.Second}
-	log.Info("starting book mode", "symbols", symbols)
-	err := coinbase.NewBook(symbols, printer, log).Run(ctx)
-	if err != nil && ctx.Err() == nil {
+	var runner interface{ Run(context.Context) error }
+	switch venueName {
+	case "coinbase":
+		runner = coinbase.NewBook(symbols, printer, log)
+	case "kraken":
+		runner = kraken.NewBook(symbols, printer, log)
+	default:
+		log.Error("unknown venue for book mode", "venue", venueName)
+		os.Exit(1)
+	}
+	log.Info("starting book mode", "venue", venueName, "symbols", symbols)
+	if err := runner.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Error("book feed failed", "error", err)
 		os.Exit(1)
 	}

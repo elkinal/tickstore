@@ -61,8 +61,9 @@ type subscribeRequest struct {
 
 type subscribeParams struct {
 	Channel  string   `json:"channel"`
-	Symbol   []string `json:"symbol"`
-	Snapshot bool     `json:"snapshot"`
+	Symbol   []string `json:"symbol,omitempty"`
+	Depth    int      `json:"depth,omitempty"`
+	Snapshot *bool    `json:"snapshot,omitempty"` // pointer: trade sends false, book omits (defaults true)
 }
 
 func (c *Connector) session(ctx context.Context, h venue.Handler) (gotData bool, err error) {
@@ -75,12 +76,13 @@ func (c *Connector) session(ctx context.Context, h venue.Handler) (gotData bool,
 	defer conn.Close(websocket.StatusNormalClosure, "shutting down")
 	conn.SetReadLimit(readLimit)
 
+	noSnapshot := false // skip the recent-trades replay (DECISIONS.md D11)
 	sub, err := json.Marshal(subscribeRequest{
 		Method: "subscribe",
 		Params: subscribeParams{
 			Channel:  "trade",
 			Symbol:   c.symbols,
-			Snapshot: false, // skip the recent-trades replay (DECISIONS.md D11)
+			Snapshot: &noSnapshot,
 		},
 	})
 	if err != nil {

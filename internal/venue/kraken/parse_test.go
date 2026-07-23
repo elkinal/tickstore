@@ -36,6 +36,9 @@ func TestParseMessageGolden(t *testing.T) {
 	}
 	for _, inPath := range inputs {
 		name := strings.TrimSuffix(filepath.Base(inPath), ".input.json")
+		if strings.HasPrefix(name, "book_") {
+			continue // book frames are covered by the book/checksum tests
+		}
 		t.Run(name, func(t *testing.T) {
 			raw, err := os.ReadFile(inPath)
 			if err != nil {

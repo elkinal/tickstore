@@ -172,6 +172,30 @@ func TestDepthOrdering(t *testing.T) {
 	}
 }
 
+func TestTrimKeepsBestLevels(t *testing.T) {
+	b := New("test", "BTC-USD")
+	snap := norm.BookSnapshot{Seq: 0}
+	// 15 bids (100..114) and 15 asks (200..214); best bid = 114, best ask = 200.
+	for i := int64(0); i < 15; i++ {
+		snap.Bids = append(snap.Bids, norm.Level{Price: 100 + i, Size: 1})
+		snap.Asks = append(snap.Asks, norm.Level{Price: 200 + i, Size: 1})
+	}
+	b.ApplySnapshot(snap)
+
+	b.Trim(10)
+	bids, asks := b.Depth(0) // all remaining
+	if len(bids) != 10 || len(asks) != 10 {
+		t.Fatalf("after Trim(10): %d bids, %d asks, want 10 each", len(bids), len(asks))
+	}
+	// Best 10 bids are 114..105; best 10 asks are 200..209.
+	if bids[0].Price != 114 || bids[9].Price != 105 {
+		t.Fatalf("trimmed bids kept wrong levels: top=%d bottom=%d", bids[0].Price, bids[9].Price)
+	}
+	if asks[0].Price != 200 || asks[9].Price != 209 {
+		t.Fatalf("trimmed asks kept wrong levels: top=%d bottom=%d", asks[0].Price, asks[9].Price)
+	}
+}
+
 // --- property tests -------------------------------------------------------
 
 // TestReplayConvergesFromShuffle feeds a whole sequenced stream out of order
