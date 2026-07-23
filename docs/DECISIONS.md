@@ -382,3 +382,63 @@ because level2 "buy"/"sell" name the resting side directly.
 
 **Revisit.** Only if Coinbase book fidelity becomes important on its own — then a
 read-only authenticated key is the honest path, accepted as a scoped exception.
+
+---
+
+## D16 — Kraken numbers via json.Number; taker side maps straight through
+*2026-07-23*
+
+**Decision.** Kraken v2 sends prices and quantities as JSON *numbers*
+(`65140.3`), not strings. Decode them into `json.Number` and `ParseFixed` the
+literal text — never through `float64`. Kraken's trade `side` is the taker
+(aggressor) side, so it maps straight to our canonical convention with no flip
+(unlike Coinbase's maker side, D2).
+
+**Why.** `json.Number` preserves the exact decimal text, keeping the no-float
+guarantee (D1) even though the wire format is numeric. Confirmed exact in the
+golden tests (65140.3 -> 6514030000000). The side convention difference is a
+real venue divergence the normalizer exists to absorb.
+
+**Cost.** Every numeric field needs the `json.Number` treatment; a plain numeric
+struct field would silently reintroduce a float.
+
+---
+
+## D17 — Kraken book integrity is the CRC32 checksum; trim to the feed depth
+*2026-07-23*
+
+**Context.** Kraken v2 book updates carry **no sequence number** — integrity is a
+CRC32 `checksum` on every snapshot and update. So for Kraken, the checksum *is*
+the gap-detection mechanism (a mismatch means we missed or misapplied an update),
+the live counterpart to the engine's seq-based detection that the property tests
+cover.
+
+**Decision.**
+- Compute Kraken's checksum from our int64 fixed-point values (no floats): for
+  the top 10 asks (ascending) then top 10 bids (descending), concatenate each
+  level's price and qty rendered at the pair's display precision with the decimal
+  point and leading zeros removed, then CRC32 (IEEE). Precision comes from the
+  `instrument` channel. Verified offline against real BTC/USD (price precision 1)
+  and ETH/USD (precision 2) snapshots before trusting it live.
+- Validate every frame; on mismatch, resync by reconnecting for a fresh snapshot.
+- `Book.Trim(depth)` after each frame: the depth-limited feed maintains a window
+  and doesn't reliably delete levels that leave it, so an untrimmed book
+  accumulates stale edge levels that eventually corrupt the top-10 checksum.
+  Trimming to the subscribed depth (10) keeps the book identical to Kraken's
+  view. This fixed occasional ETH mismatches; sustained live runs then showed
+  zero mismatches on both pairs.
+
+**Why.** The checksum is Kraken's ground-truth integrity signal and the SPEC's
+headline Kraken feature ("checksum validation where the venue supports it").
+Computing it from int64 keeps D1 intact. Trimming is the correct way to maintain
+a depth-limited book.
+
+**Cost.**
+- Checksum needs per-pair precision, so the book feed also subscribes to the
+  `instrument` channel (one extra, large snapshot frame).
+- On mismatch we reconnect, which drops every symbol's book, not just the corrupt
+  one. Rare, so acceptable; a per-symbol resubscribe would be the refinement.
+- `Trim` sorts a side (O(k log k)) per frame. Fine at depth 10.
+
+**Revisit.** For deeper books or higher-throughput pairs, resync a single symbol
+instead of the whole connection, and consider a sorted structure over the map.
