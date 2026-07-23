@@ -11,7 +11,7 @@ import (
 	"math/rand/v2"
 	"time"
 
-	"nhooyr.io/websocket"
+	"github.com/coder/websocket"
 
 	"github.com/elkinal/tickstore/internal/venue"
 )
