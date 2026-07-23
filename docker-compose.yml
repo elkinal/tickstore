@@ -1,0 +1,24 @@
+# Local ClickHouse for development and the integration test. The full app +
+# ClickHouse compose comes in milestone 6; this is just the database.
+#
+#   docker compose up -d
+#   CLICKHOUSE_ADDR=127.0.0.1:9000 go test ./internal/sink/ -run ClickHouse
+#
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    ports:
+      - "9000:9000" # native protocol (used by the app)
+      - "8123:8123" # http (handy for curl/clickhouse-client)
+    volumes:
+      # Run our schema on first startup; CREATE ... IF NOT EXISTS is idempotent.
+      - ./internal/sink/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
