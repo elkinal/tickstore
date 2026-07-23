@@ -1,0 +1,12 @@
+{
+  "venue": "coinbase",
+  "symbol": "BTC-USD",
+  "ts_exchange": "2026-07-22T14:03:11.123456Z",
+  "ts_received": "2026-07-22T14:03:11.5Z",
+  "price": "117701.29000000",
+  "price_raw": 11770129000000,
+  "size": "0.00542000",
+  "size_raw": 542000,
+  "side": "buy",
+  "trade_id": "865127782"
+}

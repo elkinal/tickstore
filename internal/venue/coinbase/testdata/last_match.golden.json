@@ -1,0 +1,12 @@
+{
+  "venue": "coinbase",
+  "symbol": "ETH-USD",
+  "ts_exchange": "2026-07-22T14:02:59.000501Z",
+  "ts_received": "2026-07-22T14:03:11.5Z",
+  "price": "3521.07000000",
+  "price_raw": 352107000000,
+  "size": "1.25000000",
+  "size_raw": 125000000,
+  "side": "sell",
+  "trade_id": "812345001"
+}
