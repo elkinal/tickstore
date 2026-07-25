@@ -51,7 +51,7 @@
     grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
     grid-template-rows: auto 1fr;
     grid-template-areas: "quotes ob" "tape ob";
-    gap: 12px; height: clamp(600px, 78vh, 780px); }
+    gap: 12px; height: clamp(640px, 82vh, 820px); }
   .quotes-panel { grid-area: quotes; } .tape-panel { grid-area: tape; } .ob-panel { grid-area: ob; }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
     display: flex; flex-direction: column; min-height: 0; }
@@ -80,7 +80,9 @@
   table.q td:first-child { padding-left: 13px; text-align: left; }
   table.q tr:hover td { background: var(--line2); }
   table.q .v { color: var(--accent); }
-  table.q .num { color: var(--text); } table.q .sp { color: var(--dim); }
+  table.q .num { color: var(--text); }
+  table.q .up { color: var(--buy); } table.q .down { color: var(--sell); }
+  table.q .ar { font-size: 8px; vertical-align: middle; }
   table.q .bid { color: var(--buy); } table.q .ask { color: var(--sell); }
   table.q td.bbid { background: var(--best-bid); }
   table.q td.bask { background: var(--best-ask); }
@@ -200,18 +202,21 @@ function renderQuotes(quotes){
     const mid = mids.length ? mids.reduce((a,b)=>a+b,0)/mids.length : 0;
     html += `<div class="qgroup"><span class="pair">${g.base} <span class="q">· ${g.quote}</span></span>`+
       `<span class="mid">mid <b>${px(mid)}</b></span></div>`+
-      `<table class="q"><thead><tr><th>Venue</th><th>Bid</th><th>Ask</th><th>Spread</th><th>Last</th></tr></thead><tbody>`;
+      `<table class="q"><thead><tr><th>Venue</th><th>Bid</th><th>Ask</th><th>Last</th></tr></thead><tbody>`;
     for(const q of g.rows){
       const key=q.venue+"|"+q.symbol, pv=prevQ[key]||{};
       const bf = pv.bid!==undefined && pv.bid!==q.bid ? " chg":"";
       const af = pv.ask!==undefined && pv.ask!==q.ask ? " chg":"";
-      prevQ[key]={bid:q.bid, ask:q.ask};
+      // Last-trade tick: green up-arrow / red down-arrow vs the previous last.
+      let lc="num", ar="";
+      if(pv.last!==undefined && q.last){ if(q.last>pv.last){lc="up";ar="▲";} else if(q.last<pv.last){lc="down";ar="▼";} }
+      prevQ[key]={bid:q.bid, ask:q.ask, last:q.last};
       const bb = g.rows.length>1 && q.bid && q.bid===bestBid ? " bbid":"";
       const ba = g.rows.length>1 && q.ask && q.ask===bestAsk ? " bask":"";
       const stale = (!q.synced || q.age_ms>4000) ? ' <span class="stale">●</span>':"";
       html += `<tr><td class="v">${q.venue}${stale}</td>`+
         `<td class="bid${bb}${bf}">${px(q.bid)}</td><td class="ask${ba}${af}">${px(q.ask)}</td>`+
-        `<td class="sp">${q.spread?px(q.spread):"—"}</td><td class="num">${px(q.last)}</td></tr>`;
+        `<td class="${lc}">${ar?`<span class="ar">${ar}</span> `:""}${px(q.last)}</td></tr>`;
     }
     html += `</tbody></table>`;
   }
@@ -238,7 +243,7 @@ async function pollDepth(){
 function renderLadder(d){
   $("obNote").textContent = `${d.venue} ${d.symbol}`;
   const host=$("ladder");
-  const asks=(d.asks||[]).slice(0,10), bids=(d.bids||[]).slice(0,10);
+  const asks=(d.asks||[]).slice(0,12), bids=(d.bids||[]).slice(0,12);
   if(!d.found || (!bids.length && !asks.length)){ host.innerHTML='<div class="empty">no book yet…</div>'; return; }
   const maxCum = Math.max(bids.at(-1)?.cum||0, asks.at(-1)?.cum||0, 1e-9);
   const bb=bids[0]?.price||0, ba=asks[0]?.price||0;

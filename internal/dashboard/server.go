@@ -78,6 +78,7 @@ func (h *handler) index(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store") // always serve the latest page
 	w.Write(indexHTML)
 }
 
