@@ -93,9 +93,11 @@
   table.q td.bbid { background: var(--best-bid); }
   table.q td.bask { background: var(--best-ask); }
   table.q .stale { color: var(--warn); }
-  td.chg { animation: chg .45s ease; }
-  @keyframes chg { from { background: rgba(99,164,255,.26); } to {} }
-  @media (prefers-reduced-motion: reduce) { td.chg { animation: none; } .scroll { scroll-behavior: auto; } }
+  /* Directional tick flash: green up / red down, fading back out. */
+  td.fu { animation: fu .6s ease-out; } td.fd { animation: fd .6s ease-out; }
+  @keyframes fu { from { background: rgba(38,194,129,.34); } to {} }
+  @keyframes fd { from { background: rgba(240,97,109,.34); } to {} }
+  @media (prefers-reduced-motion: reduce) { td.fu, td.fd { animation: none; } .scroll { scroll-behavior: auto; } }
 
   /* Order book ladder */
   .sel { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 11px; border-bottom: 1px solid var(--line); flex: none; }
@@ -194,35 +196,68 @@ async function pollBook(){
   } catch(e){ setLive(false); }
 }
 
+// The quote table is built once (and only rebuilt when the set of markets
+// changes); each poll updates cell text in place and flashes what moved, so
+// there's no full-table repaint and values snap without flicker.
+let quoteSig = "";
+const cid = s => s.replace(/[^A-Za-z0-9]/g, "_");
+function flash(el, up){ if(!el) return; el.classList.remove("fu","fd"); void el.offsetWidth; el.classList.add(up?"fu":"fd"); }
+
 function renderQuotes(quotes){
   if(!quotes.length) return;
   const groups = {};
   for(const q of quotes){ const k=q.base+"·"+q.quote; (groups[k] ||= {base:q.base, quote:q.quote, rows:[]}).rows.push(q); }
-  let body = "";
-  for(const k of Object.keys(groups).sort()){
+  const order = Object.keys(groups).sort();
+  const sig = order.map(k=>k+":"+groups[k].rows.map(r=>r.venue+r.symbol).join(",")).join("|");
+  if(sig!==quoteSig){ buildQuotes(order, groups); quoteSig=sig; }
+
+  for(const k of order){
     const g = groups[k];
     const bestBid = Math.max(0, ...g.rows.map(r=>r.bid||0));
     const asks = g.rows.map(r=>r.ask).filter(a=>a>0);
     const bestAsk = asks.length ? Math.min(...asks) : 0;
     const mids = g.rows.filter(r=>r.bid&&r.ask).map(r=>(r.bid+r.ask)/2);
     const mid = mids.length ? mids.reduce((a,b)=>a+b,0)/mids.length : 0;
+    const midEl = $("mid-"+cid(k)); if(midEl) midEl.innerHTML = `mid <b>${px(mid)}</b>`;
+    for(const q of g.rows){
+      const id=cid(q.venue+"|"+q.symbol), key=q.venue+"|"+q.symbol, pv=prevQ[key]||{};
+      const bidEl=$("bid-"+id), askEl=$("ask-"+id), lvEl=$("lv-"+id), arEl=$("ar-"+id), stEl=$("st-"+id);
+      if(bidEl){
+        bidEl.textContent = px(q.bid);
+        bidEl.className = "bid" + (g.rows.length>1 && q.bid && q.bid===bestBid ? " bbid":"");
+        if(pv.bid!==undefined && q.bid!==pv.bid) flash(bidEl, q.bid>pv.bid);
+      }
+      if(askEl){
+        askEl.textContent = px(q.ask);
+        askEl.className = "ask" + (g.rows.length>1 && q.ask && q.ask===bestAsk ? " bask":"");
+        if(pv.ask!==undefined && q.ask!==pv.ask) flash(askEl, q.ask>pv.ask);
+      }
+      if(lvEl){
+        lvEl.textContent = px(q.last);
+        if(pv.last!==undefined && q.last){
+          if(q.last>pv.last){ arEl.textContent="▲"; arEl.className="ar up"; lvEl.className="up"; }
+          else if(q.last<pv.last){ arEl.textContent="▼"; arEl.className="ar down"; lvEl.className="down"; }
+          if(q.last!==pv.last) flash(lvEl.parentElement, q.last>pv.last);
+        }
+      }
+      if(stEl) stEl.textContent = (!q.synced || q.age_ms>4000) ? "●" : "";
+      prevQ[key]={bid:q.bid, ask:q.ask, last:q.last};
+    }
+  }
+}
+
+function buildQuotes(order, groups){
+  let body = "";
+  for(const k of order){
+    const g = groups[k];
     body += `<tr class="grow"><td colspan="4"><div class="qgroup">`+
       `<span class="pair">${g.base} <span class="q">· ${g.quote}</span></span>`+
-      `<span class="mid">mid <b>${px(mid)}</b></span></div></td></tr>`;
+      `<span class="mid" id="mid-${cid(k)}">—</span></div></td></tr>`;
     for(const q of g.rows){
-      const key=q.venue+"|"+q.symbol, pv=prevQ[key]||{};
-      const bf = pv.bid!==undefined && pv.bid!==q.bid ? " chg":"";
-      const af = pv.ask!==undefined && pv.ask!==q.ask ? " chg":"";
-      // Last-trade tick: green up-arrow / red down-arrow vs the previous last.
-      let lc="num", ar="";
-      if(pv.last!==undefined && q.last){ if(q.last>pv.last){lc="up";ar="▲";} else if(q.last<pv.last){lc="down";ar="▼";} }
-      prevQ[key]={bid:q.bid, ask:q.ask, last:q.last};
-      const bb = g.rows.length>1 && q.bid && q.bid===bestBid ? " bbid":"";
-      const ba = g.rows.length>1 && q.ask && q.ask===bestAsk ? " bask":"";
-      const stale = (!q.synced || q.age_ms>4000) ? ' <span class="stale">●</span>':"";
-      body += `<tr><td class="v">${q.venue}${stale}</td>`+
-        `<td class="bid${bb}${bf}">${px(q.bid)}</td><td class="ask${ba}${af}">${px(q.ask)}</td>`+
-        `<td class="${lc}">${ar?`<span class="ar">${ar}</span> `:""}${px(q.last)}</td></tr>`;
+      const id=cid(q.venue+"|"+q.symbol);
+      body += `<tr><td class="v">${q.venue} <span class="stale" id="st-${id}"></span></td>`+
+        `<td class="bid" id="bid-${id}">—</td><td class="ask" id="ask-${id}">—</td>`+
+        `<td><span class="ar" id="ar-${id}"></span><span id="lv-${id}">—</span></td></tr>`;
     }
   }
   $("quotes").innerHTML =
