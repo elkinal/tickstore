@@ -19,6 +19,7 @@ import (
 
 	"github.com/elkinal/tickstore/internal/book"
 	"github.com/elkinal/tickstore/internal/config"
+	"github.com/elkinal/tickstore/internal/dashboard"
 	"github.com/elkinal/tickstore/internal/metrics"
 	"github.com/elkinal/tickstore/internal/norm"
 	"github.com/elkinal/tickstore/internal/sink"
@@ -181,6 +182,9 @@ func runConfig(ctx context.Context, path string, log *slog.Logger) {
 	}
 
 	go metrics.Serve(ctx, cfg.Metrics.Addr, log)
+	if ch != nil {
+		go dashboard.Serve(ctx, cfg.Dashboard.Addr, ch, log)
+	}
 
 	// Build every connector before starting, so a bad venue name fails fast.
 	conns := make([]venue.Venue, 0, len(cfg.Venues))

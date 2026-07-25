@@ -15,6 +15,9 @@ sink:
 metrics:
   addr: ":9090"
 
+dashboard:
+  addr: ":8080"
+
 venues:
   - name: coinbase
     symbols: [BTC-USD, ETH-USD]

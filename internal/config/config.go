@@ -15,6 +15,7 @@ type Config struct {
 	ClickHouse ClickHouse `yaml:"clickhouse"`
 	Sink       Sink       `yaml:"sink"`
 	Metrics    Metrics    `yaml:"metrics"`
+	Dashboard  Dashboard  `yaml:"dashboard"`
 	Venues     []Venue    `yaml:"venues"`
 	// PersistBooks additionally streams each venue's L2 order book into the
 	// book_updates table. It's off by default: the book feed is far higher
@@ -24,6 +25,12 @@ type Config struct {
 
 // Metrics configures the Prometheus endpoint. An empty Addr disables it.
 type Metrics struct {
+	Addr string `yaml:"addr"`
+}
+
+// Dashboard configures the live web view (feed + storage stats). An empty Addr
+// disables it. It reads from ClickHouse, so it does nothing without a sink.
+type Dashboard struct {
 	Addr string `yaml:"addr"`
 }
 

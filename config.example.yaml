@@ -17,6 +17,9 @@ sink:
 metrics:
   addr: ":9090" # Prometheus endpoint at /metrics; empty disables it
 
+dashboard:
+  addr: ":8080" # live web view (feed + storage stats); empty disables it
+
 # Also stream each venue's full L2 order book into the book_updates table
 # ("the firehose"). Far higher volume than trades, so it's off by default and
 # has a 30-day TTL. Needs clickhouse.addr set.

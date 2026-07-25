@@ -138,9 +138,11 @@ ssh -L 9090:localhost:9090 -L 8123:localhost:8123 user@your-server
 and survives restarts. Trades are ~1 GB/month for the default six symbols. Full
 L2 order books ("the firehose") can also be persisted to the `book_updates`
 table by setting `persist_books: true` in the config — it's off by default
-because books are far higher volume than trades. That table carries a 30-day TTL
-(keyed on `ts_received`) so its disk stays bounded; give the firehose a dedicated
-volume rather than the boot disk.
+because books are far higher volume than trades (measured ~180 book updates/sec
+vs. a few trades/sec across the six default symbols). ClickHouse compresses them
+to ~12 bytes/row, so the firehose runs ~0.15–0.2 GB/day; with the table's 30-day
+TTL (keyed on `ts_received`) that settles around ~5–6 GB steady state — bounded
+enough to share the boot disk, though a dedicated volume gives headroom.
 
 **Updating.** `git pull && docker compose up -d --build`.
 
