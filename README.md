@@ -158,6 +158,7 @@ as `ts-*` commands you run from your own machine over SSH:
 | `ts-status` | container health |
 | `ts-vwap` / `ts-count` | live VWAP / trade counts per symbol |
 | `ts-feed` | live scrolling feed of trades as they arrive |
+| `ts-dashboard` | open the live web dashboard in your browser |
 | `ts-q "SQL"` | run any ClickHouse query |
 | `ts-metrics` | Prometheus counters |
 | `ts-logs` | follow the live app log |
