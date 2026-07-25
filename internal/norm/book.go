@@ -39,4 +39,8 @@ type BookUpdate struct {
 	Price      int64
 	Size       int64
 	Seq        uint64
+	// IsSnapshot marks a level that came from a full snapshot (book reseed)
+	// rather than an incremental delta. Set only when persisting; the engine
+	// itself ignores it.
+	IsSnapshot bool
 }

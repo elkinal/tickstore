@@ -13,6 +13,7 @@ import (
 
 	"github.com/elkinal/tickstore/internal/book"
 	"github.com/elkinal/tickstore/internal/norm"
+	"github.com/elkinal/tickstore/internal/venue"
 )
 
 // BookObserver is notified after each level2 frame is applied, with the current
@@ -34,12 +35,13 @@ type BookConnector struct {
 	url      string
 	symbols  []string
 	observer BookObserver
+	sink     venue.BookSink
 	log      *slog.Logger
 }
 
 // NewBook builds a BookConnector for the given products. A nil logger defaults
-// to slog.Default(); observer may be nil.
-func NewBook(symbols []string, observer BookObserver, log *slog.Logger) *BookConnector {
+// to slog.Default(); observer and sink may be nil (sink nil = don't persist).
+func NewBook(symbols []string, observer BookObserver, sink venue.BookSink, log *slog.Logger) *BookConnector {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -47,6 +49,7 @@ func NewBook(symbols []string, observer BookObserver, log *slog.Logger) *BookCon
 		url:      FeedURL,
 		symbols:  symbols,
 		observer: observer,
+		sink:     sink,
 		log:      log.With("venue", Name, "feed", "level2"),
 	}
 }
@@ -145,6 +148,7 @@ func (c *BookConnector) dispatch(books map[string]*seqBook, snap *norm.BookSnaps
 		sb.seq++
 		snap.Seq = sb.seq
 		sb.book.ApplySnapshot(*snap)
+		venue.EmitSnapshot(c.sink, *snap)
 		c.notify(sb.book)
 		return
 	}
@@ -162,6 +166,9 @@ func (c *BookConnector) dispatch(books map[string]*seqBook, snap *norm.BookSnaps
 		sb.seq++
 		ups[i].Seq = sb.seq
 		sb.book.Apply(ups[i])
+		if c.sink != nil {
+			c.sink.OnBookUpdate(ups[i])
+		}
 	}
 	c.notify(sb.book)
 }

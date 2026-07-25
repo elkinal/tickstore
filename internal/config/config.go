@@ -16,6 +16,10 @@ type Config struct {
 	Sink       Sink       `yaml:"sink"`
 	Metrics    Metrics    `yaml:"metrics"`
 	Venues     []Venue    `yaml:"venues"`
+	// PersistBooks additionally streams each venue's L2 order book into the
+	// book_updates table. It's off by default: the book feed is far higher
+	// volume than trades ("the firehose"), so it's opt-in.
+	PersistBooks bool `yaml:"persist_books"`
 }
 
 // Metrics configures the Prometheus endpoint. An empty Addr disables it.

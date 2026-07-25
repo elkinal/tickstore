@@ -535,3 +535,44 @@ and runs it alongside ClickHouse, with `config.docker.yaml` pointing at the
 **Revisit.** If any package became a shared library, switch it to an injected
 registry. A Grafana dashboard and Prometheus scrape config would round out the
 observability story.
+
+---
+
+## D21 — Order books persisted as an append-only book_updates stream, opt-in
+*2026-07-25*
+
+**Decision.** Persist L2 order books by writing every level change — snapshot
+levels and incremental deltas alike — as rows in a `book_updates` table
+(`venue, symbol, ts_exchange, ts_received, side, price, size, seq, is_snapshot`),
+rather than storing reconstructed book states or periodic depth snapshots. The
+sink `Batcher` was made generic (`Batcher[T]`) so the same batching/retry/flush
+logic serves trades and book updates; ClickHouse hands out typed inserters
+(`Trades()`, `Books()`) over one shared connection. Connectors emit through a
+`venue.BookSink` interface (nil = don't persist). It's gated by a
+`persist_books` config flag, default false, and the table has a 30-day TTL keyed
+on `ts_received`.
+
+**Why.**
+- *Append-only deltas* are the loss-free representation: the exact update stream
+  the venue sent, replayable into any book state at any past instant. Storing
+  reconstructed states would bake in our depth choice and lose information.
+- *TTL on `ts_received`, not `ts_exchange`* — some venues' snapshots carry no
+  exchange timestamp; a zero `ts_exchange` would look 55 years old and be
+  deleted immediately. `ts_received` is always set locally.
+- *Generic Batcher* avoids a second copy of the batching state machine; the row
+  type is the only thing that differed.
+- *Opt-in* because books are far higher volume than trades ("the firehose") and
+  need a bigger disk; trade collection shouldn't pay that cost by default.
+
+**Cost.**
+- Storage: unmeasured GB/day until it runs against the live feeds; the 30-day
+  TTL bounds it but a firehose still needs a dedicated volume, not the boot disk.
+- `is_snapshot` rows repeat the full book on every reconnect/resync; a consumer
+  reconstructing state must treat a snapshot as "reset this book" and replay
+  deltas after it, keyed by `seq`.
+- The per-venue `seq` is our monotonic counter, not an exchange sequence, so it
+  orders rows within a stream but isn't comparable across reconnects.
+
+**Revisit.** Measure real GB/day before sizing the volume. If query patterns
+turn out to want current depth rather than history, add a periodic
+materialized snapshot table alongside (not instead of) the delta stream.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -31,12 +32,13 @@ type BookConnector struct {
 	url      string
 	symbols  []string
 	observer BookObserver
+	sink     venue.BookSink
 	log      *slog.Logger
 }
 
-// NewBook builds a BookConnector. A nil logger uses slog.Default(); observer may
-// be nil.
-func NewBook(symbols []string, observer BookObserver, log *slog.Logger) *BookConnector {
+// NewBook builds a BookConnector. A nil logger uses slog.Default(); observer and
+// sink may be nil (sink nil = don't persist).
+func NewBook(symbols []string, observer BookObserver, sink venue.BookSink, log *slog.Logger) *BookConnector {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -44,6 +46,7 @@ func NewBook(symbols []string, observer BookObserver, log *slog.Logger) *BookCon
 		url:      FeedURL,
 		symbols:  symbols,
 		observer: observer,
+		sink:     sink,
 		log:      log.With("venue", Name, "feed", "books"),
 	}
 }
@@ -121,20 +124,24 @@ func (c *BookConnector) session(ctx context.Context) (gotData bool, err error) {
 			continue
 		}
 		gotData = true
+		now := time.Now()
 		for i := range rows {
-			if err := c.applyBook(e.Arg.InstID, e.Action, &rows[i], books); err != nil {
+			if err := c.applyBook(e.Arg.InstID, e.Action, &rows[i], now, books); err != nil {
 				return gotData, err // gap or bad frame: reconnect for a fresh snapshot
 			}
 		}
 	}
 }
 
-func (c *BookConnector) applyBook(instID, action string, d *bookData, books map[string]*seqBook) error {
+func (c *BookConnector) applyBook(instID, action string, d *bookData, tsReceived time.Time, books map[string]*seqBook) error {
 	sb := books[instID]
 	if sb == nil {
 		sb = &seqBook{book: book.New(Name, instID)}
 		books[instID] = sb
 	}
+	// A bad ts leaves tsExchange zero rather than dropping the frame; the book
+	// data is still valid and the checksum/seq linkage is what guards integrity.
+	tsExchange, _ := parseMillis(d.Ts)
 
 	if action == "snapshot" {
 		bids, err := parseBookLevels(d.Bids)
@@ -146,7 +153,12 @@ func (c *BookConnector) applyBook(instID, action string, d *bookData, books map[
 			return err
 		}
 		sb.engineSeq++
-		sb.book.ApplySnapshot(norm.BookSnapshot{Symbol: instID, Bids: bids, Asks: asks, Seq: sb.engineSeq})
+		snap := norm.BookSnapshot{
+			Venue: Name, Symbol: instID, TsExchange: tsExchange, TsReceived: tsReceived,
+			Bids: bids, Asks: asks, Seq: sb.engineSeq,
+		}
+		sb.book.ApplySnapshot(snap)
+		venue.EmitSnapshot(c.sink, snap)
 		sb.lastSeqID = d.SeqID
 		sb.seeded = true
 	} else {
@@ -155,10 +167,10 @@ func (c *BookConnector) applyBook(instID, action string, d *bookData, books map[
 			metrics.Resyncs.WithLabelValues(Name).Inc()
 			return fmt.Errorf("okx: %s seq gap: prevSeqId %d, have %d", instID, d.PrevSeqID, sb.lastSeqID)
 		}
-		if err := c.applyChanges(sb, d.Bids, norm.Buy); err != nil {
+		if err := c.applyChanges(sb, instID, tsExchange, tsReceived, d.Bids, norm.Buy); err != nil {
 			return err
 		}
-		if err := c.applyChanges(sb, d.Asks, norm.Sell); err != nil {
+		if err := c.applyChanges(sb, instID, tsExchange, tsReceived, d.Asks, norm.Sell); err != nil {
 			return err
 		}
 		sb.lastSeqID = d.SeqID
@@ -170,14 +182,21 @@ func (c *BookConnector) applyBook(instID, action string, d *bookData, books map[
 	return nil
 }
 
-func (c *BookConnector) applyChanges(sb *seqBook, rows [][]string, side norm.Side) error {
+func (c *BookConnector) applyChanges(sb *seqBook, symbol string, tsExchange, tsReceived time.Time, rows [][]string, side norm.Side) error {
 	levels, err := parseBookLevels(rows)
 	if err != nil {
 		return err
 	}
 	for _, l := range levels {
 		sb.engineSeq++
-		sb.book.Apply(norm.BookUpdate{Side: side, Price: l.Price, Size: l.Size, Seq: sb.engineSeq})
+		u := norm.BookUpdate{
+			Venue: Name, Symbol: symbol, TsExchange: tsExchange, TsReceived: tsReceived,
+			Side: side, Price: l.Price, Size: l.Size, Seq: sb.engineSeq,
+		}
+		sb.book.Apply(u)
+		if c.sink != nil {
+			c.sink.OnBookUpdate(u)
+		}
 	}
 	return nil
 }

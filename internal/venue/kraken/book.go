@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -40,12 +41,13 @@ type BookConnector struct {
 	url      string
 	symbols  []string
 	observer BookObserver
+	sink     venue.BookSink
 	log      *slog.Logger
 }
 
-// NewBook builds a BookConnector. A nil logger uses slog.Default(); observer
-// may be nil.
-func NewBook(symbols []string, observer BookObserver, log *slog.Logger) *BookConnector {
+// NewBook builds a BookConnector. A nil logger uses slog.Default(); observer and
+// sink may be nil (sink nil = don't persist).
+func NewBook(symbols []string, observer BookObserver, sink venue.BookSink, log *slog.Logger) *BookConnector {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -53,6 +55,7 @@ func NewBook(symbols []string, observer BookObserver, log *slog.Logger) *BookCon
 		url:      FeedURL,
 		symbols:  symbols,
 		observer: observer,
+		sink:     sink,
 		log:      log.With("venue", Name, "feed", "book"),
 	}
 }
@@ -138,13 +141,14 @@ func (c *BookConnector) session(ctx context.Context) (gotData bool, err error) {
 			}
 		case "book":
 			gotData = true
+			now := time.Now()
 			var rows []bookDataWire
 			if err := json.Unmarshal(e.Data, &rows); err != nil {
 				c.log.Error("book decode", "error", err)
 				continue
 			}
 			for i := range rows {
-				if err := c.applyBook(&rows[i], e.Type == "snapshot", precisions, books); err != nil {
+				if err := c.applyBook(&rows[i], e.Type == "snapshot", now, precisions, books); err != nil {
 					// A checksum mismatch (or bad frame) means the book is
 					// corrupt; reconnect for a fresh snapshot.
 					return gotData, err
@@ -154,12 +158,20 @@ func (c *BookConnector) session(ctx context.Context) (gotData bool, err error) {
 	}
 }
 
-// applyBook applies one book frame to its book and validates the checksum.
-func (c *BookConnector) applyBook(d *bookDataWire, isSnapshot bool, precisions map[string]precision, books map[string]*seqBook) error {
+// applyBook applies one book frame to its book, validates the checksum, and (if
+// a sink is set) emits the levels for persistence.
+func (c *BookConnector) applyBook(d *bookDataWire, isSnapshot bool, tsReceived time.Time, precisions map[string]precision, books map[string]*seqBook) error {
 	sb := books[d.Symbol]
 	if sb == nil {
 		sb = &seqBook{book: book.New(Name, d.Symbol)}
 		books[d.Symbol] = sb
+	}
+	// The v2 book snapshot has no timestamp; updates carry one per frame.
+	var tsExchange time.Time
+	if d.Timestamp != "" {
+		if t, err := time.Parse(time.RFC3339Nano, d.Timestamp); err == nil {
+			tsExchange = t
+		}
 	}
 
 	if isSnapshot {
@@ -172,12 +184,17 @@ func (c *BookConnector) applyBook(d *bookDataWire, isSnapshot bool, precisions m
 			return fmt.Errorf("kraken: snapshot asks: %w", err)
 		}
 		sb.seq++
-		sb.book.ApplySnapshot(norm.BookSnapshot{Symbol: d.Symbol, Bids: bids, Asks: asks, Seq: sb.seq})
+		snap := norm.BookSnapshot{
+			Venue: Name, Symbol: d.Symbol, TsExchange: tsExchange, TsReceived: tsReceived,
+			Bids: bids, Asks: asks, Seq: sb.seq,
+		}
+		sb.book.ApplySnapshot(snap)
+		venue.EmitSnapshot(c.sink, snap)
 	} else {
-		if err := applyChanges(sb, d.Bids, norm.Buy); err != nil {
+		if err := c.applyChanges(sb, d.Symbol, tsExchange, tsReceived, d.Bids, norm.Buy); err != nil {
 			return err
 		}
-		if err := applyChanges(sb, d.Asks, norm.Sell); err != nil {
+		if err := c.applyChanges(sb, d.Symbol, tsExchange, tsReceived, d.Asks, norm.Sell); err != nil {
 			return err
 		}
 	}
@@ -202,8 +219,9 @@ func (c *BookConnector) applyBook(d *bookDataWire, isSnapshot bool, precisions m
 	return nil
 }
 
-// applyChanges applies one side's level changes (qty 0 removes a level).
-func applyChanges(sb *seqBook, levels []bookLevelWire, side norm.Side) error {
+// applyChanges applies one side's level changes (qty 0 removes a level) and, if
+// a sink is set, emits each as a book update for persistence.
+func (c *BookConnector) applyChanges(sb *seqBook, symbol string, tsExchange, tsReceived time.Time, levels []bookLevelWire, side norm.Side) error {
 	for _, w := range levels {
 		price, err := norm.ParseFixed(w.Price.String(), norm.PriceDecimals)
 		if err != nil {
@@ -214,7 +232,14 @@ func applyChanges(sb *seqBook, levels []bookLevelWire, side norm.Side) error {
 			return fmt.Errorf("kraken: update qty %q: %w", w.Qty, err)
 		}
 		sb.seq++
-		sb.book.Apply(norm.BookUpdate{Side: side, Price: price, Size: qty, Seq: sb.seq})
+		u := norm.BookUpdate{
+			Venue: Name, Symbol: symbol, TsExchange: tsExchange, TsReceived: tsReceived,
+			Side: side, Price: price, Size: qty, Seq: sb.seq,
+		}
+		sb.book.Apply(u)
+		if c.sink != nil {
+			c.sink.OnBookUpdate(u)
+		}
 	}
 	return nil
 }

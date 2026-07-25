@@ -17,6 +17,11 @@ sink:
 metrics:
   addr: ":9090" # Prometheus endpoint at /metrics; empty disables it
 
+# Also stream each venue's full L2 order book into the book_updates table
+# ("the firehose"). Far higher volume than trades, so it's off by default and
+# has a 30-day TTL. Needs clickhouse.addr set.
+persist_books: false
+
 venues:
   - name: coinbase
     symbols: [BTC-USD, ETH-USD]

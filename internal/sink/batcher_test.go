@@ -78,7 +78,7 @@ func TestFlushOnSize(t *testing.T) {
 	defer b.Close(context.Background())
 
 	for i := 0; i < 5; i++ {
-		b.OnTrade(tradeN(i))
+		b.Add(tradeN(i))
 	}
 	if got := waitFor(t, f.inserted); got != 5 {
 		t.Fatalf("batch size = %d, want 5", got)
@@ -93,7 +93,7 @@ func TestFlushOnDelay(t *testing.T) {
 
 	start := time.Now()
 	for i := 0; i < 3; i++ {
-		b.OnTrade(tradeN(i))
+		b.Add(tradeN(i))
 	}
 	if got := waitFor(t, f.inserted); got != 3 {
 		t.Fatalf("batch size = %d, want 3", got)
@@ -109,7 +109,7 @@ func TestCloseFlushesRemainder(t *testing.T) {
 	b := NewBatcher(f, Config{MaxRows: 1000, MaxDelay: time.Hour, Logger: quietLogger()})
 
 	for i := 0; i < 3; i++ {
-		b.OnTrade(tradeN(i))
+		b.Add(tradeN(i))
 	}
 	if err := b.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -128,7 +128,7 @@ func TestRetryUntilSuccess(t *testing.T) {
 	})
 	defer b.Close(context.Background())
 
-	b.OnTrade(tradeN(1))
+	b.Add(tradeN(1))
 	if got := waitFor(t, f.inserted); got != 1 {
 		t.Fatalf("batch size = %d, want 1", got)
 	}
@@ -151,7 +151,7 @@ func TestNoDataLossUnderBackpressure(t *testing.T) {
 
 	const n = 2500
 	for i := 0; i < n; i++ {
-		b.OnTrade(tradeN(i))
+		b.Add(tradeN(i))
 	}
 	if err := b.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)

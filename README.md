@@ -135,9 +135,12 @@ ssh -L 9090:localhost:9090 -L 8123:localhost:8123 user@your-server
 ```
 
 **Persistence & storage.** ClickHouse data lives in the `clickhouse-data` volume
-and survives restarts. Trades are ~1 GB/month for the default six symbols. If you
-add `book_updates` persistence later, add a `TTL` to that table (books are much
-higher volume) so disk stays bounded.
+and survives restarts. Trades are ~1 GB/month for the default six symbols. Full
+L2 order books ("the firehose") can also be persisted to the `book_updates`
+table by setting `persist_books: true` in the config — it's off by default
+because books are far higher volume than trades. That table carries a 30-day TTL
+(keyed on `ts_received`) so its disk stays bounded; give the firehose a dedicated
+volume rather than the boot disk.
 
 **Updating.** `git pull && docker compose up -d --build`.
 

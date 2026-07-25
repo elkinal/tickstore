@@ -50,6 +50,27 @@ func (stdoutHandler) OnTrade(t norm.Trade) {
 	)
 }
 
+// tradeSink adapts a trade Batcher to venue.Handler: it records per-trade
+// metrics (the Batcher itself is metric-agnostic) and queues the row.
+type tradeSink struct{ b *sink.Batcher[norm.Trade] }
+
+// OnTrade records metrics and enqueues the trade for batched insertion.
+func (s tradeSink) OnTrade(t norm.Trade) {
+	metrics.Trades.WithLabelValues(t.Venue).Inc()
+	metrics.E2ELatencySeconds.WithLabelValues(t.Venue).
+		Observe(t.TsReceived.Sub(t.TsExchange).Seconds())
+	s.b.Add(t)
+}
+
+// bookSink adapts a book Batcher to venue.BookSink: it queues each L2 change for
+// batched insertion into book_updates.
+type bookSink struct {
+	b *sink.Batcher[norm.BookUpdate]
+}
+
+// OnBookUpdate enqueues one book-level change.
+func (s bookSink) OnBookUpdate(u norm.BookUpdate) { s.b.Add(u) }
+
 func main() {
 	symbolsFlag := flag.String("symbols", "BTC-USD,ETH-USD",
 		"comma-separated Coinbase product ids")
@@ -92,7 +113,7 @@ func main() {
 	chCfg := sink.ClickHouseConfig{
 		Addr: *chAddr, Database: *chDB, Username: *chUser, Password: *chPass,
 	}
-	handler, onShutdown, err := buildHandler(ctx, chCfg, sink.Config{Logger: log}, log)
+	handler, ch, onShutdown, err := buildHandler(ctx, chCfg, sink.Config{Logger: log}, log)
 	if err != nil {
 		log.Error("startup failed", "error", err)
 		os.Exit(1)
@@ -103,6 +124,9 @@ func main() {
 
 	if onShutdown != nil {
 		onShutdown()
+	}
+	if ch != nil {
+		ch.Close()
 	}
 	if runErr != nil && ctx.Err() == nil {
 		log.Error("venue failed", "error", runErr)
@@ -132,10 +156,28 @@ func runConfig(ctx context.Context, path string, log *slog.Logger) {
 		MaxDelay: time.Duration(cfg.Sink.MaxDelay),
 		Buffer:   cfg.Sink.Buffer,
 	}
-	handler, onShutdown, err := buildHandler(ctx, chCfg, sinkCfg, log)
+	handler, ch, onShutdown, err := buildHandler(ctx, chCfg, sinkCfg, log)
 	if err != nil {
 		log.Error("startup failed", "error", err)
 		os.Exit(1)
+	}
+
+	// Optionally persist order books ("the firehose"): a second batcher on the
+	// same connection, feeding book connectors alongside the trade ones.
+	var books venue.BookSink
+	var flushBooks func()
+	if cfg.PersistBooks && ch != nil {
+		sinkCfg.Logger = log
+		bookBatcher := sink.NewBatcher[norm.BookUpdate](ch.Books(), sinkCfg)
+		books = bookSink{bookBatcher}
+		flushBooks = func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+			defer cancel()
+			if err := bookBatcher.Close(shutdownCtx); err != nil {
+				log.Error("book sink did not flush cleanly", "error", err)
+			}
+		}
+		log.Info("persisting order books to clickhouse")
 	}
 
 	go metrics.Serve(ctx, cfg.Metrics.Addr, log)
@@ -149,6 +191,19 @@ func runConfig(ctx context.Context, path string, log *slog.Logger) {
 			os.Exit(1)
 		}
 		conns = append(conns, conn)
+	}
+	// Book connectors run independently of the trade handler, each streaming its
+	// venue's L2 book into the shared book sink.
+	var bookConns []bookRunner
+	if books != nil {
+		for _, v := range cfg.Venues {
+			bc, err := bookConnector(v.Name, v.Symbols, books, log)
+			if err != nil {
+				log.Error("startup failed", "error", err)
+				os.Exit(1)
+			}
+			bookConns = append(bookConns, bc)
+		}
 	}
 
 	var wg sync.WaitGroup
@@ -164,12 +219,50 @@ func runConfig(ctx context.Context, path string, log *slog.Logger) {
 			}
 		}()
 	}
+	for _, bc := range bookConns {
+		bc := bc
+		log.Info("starting books", "venue", bc.Name())
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := bc.Run(ctx); err != nil && ctx.Err() == nil {
+				log.Error("book venue failed", "venue", bc.Name(), "error", err)
+			}
+		}()
+	}
 	wg.Wait()
 
+	// Flush trades and books before closing the shared connection.
 	if onShutdown != nil {
 		onShutdown()
 	}
+	if flushBooks != nil {
+		flushBooks()
+	}
+	if ch != nil {
+		ch.Close()
+	}
 	log.Info("shut down cleanly")
+}
+
+// bookRunner is a venue's book connector: it streams L2 books until ctx ends.
+type bookRunner interface {
+	Name() string
+	Run(context.Context) error
+}
+
+// bookConnector builds the book connector for the named venue, wired to sink.
+func bookConnector(name string, symbols []string, sink venue.BookSink, log *slog.Logger) (bookRunner, error) {
+	switch name {
+	case "coinbase":
+		return coinbase.NewBook(symbols, nil, sink, log), nil
+	case "kraken":
+		return kraken.NewBook(symbols, nil, sink, log), nil
+	case "okx":
+		return okx.NewBook(symbols, nil, sink, log), nil
+	default:
+		return nil, fmt.Errorf("unknown venue %q (want coinbase, kraken, or okx)", name)
+	}
 }
 
 // tradeConnector builds the trade connector for the named venue.
@@ -193,11 +286,11 @@ func runBookMode(ctx context.Context, venueName string, symbols []string, log *s
 	var runner interface{ Run(context.Context) error }
 	switch venueName {
 	case "coinbase":
-		runner = coinbase.NewBook(symbols, printer, log)
+		runner = coinbase.NewBook(symbols, printer, nil, log)
 	case "kraken":
-		runner = kraken.NewBook(symbols, printer, log)
+		runner = kraken.NewBook(symbols, printer, nil, log)
 	case "okx":
-		runner = okx.NewBook(symbols, printer, log)
+		runner = okx.NewBook(symbols, printer, nil, log)
 	default:
 		log.Error("unknown venue for book mode", "venue", venueName)
 		os.Exit(1)
@@ -238,24 +331,25 @@ func (p *bookPrinter) OnBook(b *book.Book) {
 		b.LastSeq(), gaps, resyncs)
 }
 
-// buildHandler returns the trade destination and an optional shutdown hook that
-// must run after the connector stops. With no ClickHouse address it's the
-// stdout printer and there's nothing to flush.
-func buildHandler(ctx context.Context, cfg sink.ClickHouseConfig, sinkCfg sink.Config, log *slog.Logger) (venue.Handler, func(), error) {
+// buildHandler returns the trade destination, the ClickHouse handle (nil when
+// printing to stdout, so callers can build a book sink on the same connection),
+// and a hook that flushes the trade batcher after the connector stops. The
+// caller owns closing ch (after every batcher on it has flushed).
+func buildHandler(ctx context.Context, cfg sink.ClickHouseConfig, sinkCfg sink.Config, log *slog.Logger) (venue.Handler, *sink.ClickHouse, func(), error) {
 	if cfg.Addr == "" {
-		return stdoutHandler{}, nil, nil
+		return stdoutHandler{}, nil, nil, nil
 	}
 
 	ch, err := sink.OpenClickHouse(ctx, cfg)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if err := ch.Migrate(ctx); err != nil {
 		ch.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	sinkCfg.Logger = log
-	batcher := sink.NewBatcher(ch, sinkCfg)
+	batcher := sink.NewBatcher[norm.Trade](ch.Trades(), sinkCfg)
 	log.Info("writing trades to clickhouse", "addr", cfg.Addr)
 
 	flush := func() {
@@ -265,5 +359,5 @@ func buildHandler(ctx context.Context, cfg sink.ClickHouseConfig, sinkCfg sink.C
 			log.Error("sink did not flush cleanly", "error", err)
 		}
 	}
-	return batcher, flush, nil
+	return tradeSink{batcher}, ch, flush, nil
 }

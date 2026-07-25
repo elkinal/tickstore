@@ -18,8 +18,11 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-// insertStmt names the table for PrepareBatch; the driver fills in the columns.
-const insertStmt = "INSERT INTO tickstore.trades"
+// Insert statements name the table for PrepareBatch; the driver fills in columns.
+const (
+	tradeInsertStmt = "INSERT INTO tickstore.trades"
+	bookInsertStmt  = "INSERT INTO tickstore.book_updates"
+)
 
 // ClickHouseConfig points the sink at a ClickHouse server (native protocol,
 // default port 9000).
@@ -30,7 +33,7 @@ type ClickHouseConfig struct {
 	Password string
 }
 
-// ClickHouse is an Inserter that writes batches of trades to ClickHouse.
+// ClickHouse owns a connection and hands out typed inserters (Trades, Books).
 type ClickHouse struct {
 	conn driver.Conn
 }
@@ -85,28 +88,74 @@ func stripLineComments(sql string) string {
 	return b.String()
 }
 
+// Close releases the connection. The per-table inserters share it, so close it
+// once here after their Batchers have stopped.
+func (c *ClickHouse) Close() error { return c.conn.Close() }
+
+// Trades returns an inserter for the trades table.
+func (c *ClickHouse) Trades() TradeInserter { return TradeInserter{c} }
+
+// Books returns an inserter for the book_updates table.
+func (c *ClickHouse) Books() BookInserter { return BookInserter{c} }
+
+// TradeInserter writes batches of trades. It implements Inserter[norm.Trade].
+type TradeInserter struct{ ch *ClickHouse }
+
 // Insert writes one batch. It builds a fresh batch each call, so a failed send
 // leaves nothing half-applied and the Batcher can safely retry.
-func (c *ClickHouse) Insert(ctx context.Context, trades []norm.Trade) error {
-	batch, err := c.conn.PrepareBatch(ctx, insertStmt)
+func (t TradeInserter) Insert(ctx context.Context, trades []norm.Trade) error {
+	batch, err := t.ch.conn.PrepareBatch(ctx, tradeInsertStmt)
 	if err != nil {
-		return fmt.Errorf("clickhouse: prepare: %w", err)
+		return fmt.Errorf("clickhouse: prepare trades: %w", err)
 	}
 	for i := range trades {
-		t := &trades[i]
+		r := &trades[i]
 		if err := batch.Append(
-			t.Venue, t.Symbol, t.TsExchange, t.TsReceived,
-			t.Price, t.Size, t.Side.String(), t.TradeID,
+			r.Venue, r.Symbol, r.TsExchange, r.TsReceived,
+			r.Price, r.Size, r.Side.String(), r.TradeID,
 		); err != nil {
 			batch.Abort()
-			return fmt.Errorf("clickhouse: append: %w", err)
+			return fmt.Errorf("clickhouse: append trade: %w", err)
 		}
 	}
 	if err := batch.Send(); err != nil {
-		return fmt.Errorf("clickhouse: send: %w", err)
+		return fmt.Errorf("clickhouse: send trades: %w", err)
 	}
 	return nil
 }
 
-// Close releases the connection.
-func (c *ClickHouse) Close() error { return c.conn.Close() }
+// Close is a no-op: the shared connection is closed via ClickHouse.Close.
+func (t TradeInserter) Close() error { return nil }
+
+// BookInserter writes batches of book updates. It implements
+// Inserter[norm.BookUpdate].
+type BookInserter struct{ ch *ClickHouse }
+
+// Insert writes one batch of book-level changes.
+func (b BookInserter) Insert(ctx context.Context, ups []norm.BookUpdate) error {
+	batch, err := b.ch.conn.PrepareBatch(ctx, bookInsertStmt)
+	if err != nil {
+		return fmt.Errorf("clickhouse: prepare book: %w", err)
+	}
+	for i := range ups {
+		r := &ups[i]
+		snap := uint8(0)
+		if r.IsSnapshot {
+			snap = 1
+		}
+		if err := batch.Append(
+			r.Venue, r.Symbol, r.TsExchange, r.TsReceived,
+			r.Side.String(), r.Price, r.Size, r.Seq, snap,
+		); err != nil {
+			batch.Abort()
+			return fmt.Errorf("clickhouse: append book: %w", err)
+		}
+	}
+	if err := batch.Send(); err != nil {
+		return fmt.Errorf("clickhouse: send book: %w", err)
+	}
+	return nil
+}
+
+// Close is a no-op: the shared connection is closed via ClickHouse.Close.
+func (b BookInserter) Close() error { return nil }
