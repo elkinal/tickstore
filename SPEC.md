@@ -43,7 +43,7 @@ Data flow:
 - BookUpdate: venue, symbol, ts_exchange, ts_received, side, price, size,
   seq, is_snapshot
 - Prices/sizes as fixed-point int64 with per-symbol scale, not float64.
-  (Interview-defensible decision: exact equality, no float drift.)
+  (Rationale: exact equality, no float drift.)
 
 ## Order book engine (internal/book)
 - Sorted bid/ask sides; apply deltas by seq.

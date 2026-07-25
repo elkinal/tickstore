@@ -1,12 +1,16 @@
 # tickstore
 
 Multi-venue market data engine in Go: normalized exchange feeds, real-time order
-book reconstruction with gap detection, and a ClickHouse tick store.
+book reconstruction with gap detection, a ClickHouse tick store, and a live
+streaming dashboard — running 24/7 on a VPS.
 
 tickstore connects to **Coinbase, Kraken, and OKX** over their public
 WebSockets, normalizes every venue's quirks into one canonical schema, rebuilds
 L2 order books with per-venue integrity checks, and batches trades into
-ClickHouse for analytics — with Prometheus metrics throughout.
+ClickHouse for analytics — with Prometheus metrics throughout. It can also
+persist the full L2 order-book firehose, and serves a live web dashboard
+(cross-venue quotes, a depth ladder, and time & sales) pushed over Server-Sent
+Events.
 
 ```mermaid
 flowchart LR
@@ -16,7 +20,10 @@ flowchart LR
     P[parse + normalize<br/>fixed-point int64] --> T{type}
     T -->|trades| B[Batcher<br/>size/250ms flush<br/>backpressure + retries]
     T -->|L2 updates| E[book engine<br/>gap detect · resync<br/>checksum validate]
-    B --> CH[(ClickHouse<br/>MergeTree)]
+    E -->|deltas + snapshots| B
+    E --> L[live state<br/>in-memory]
+    B --> CH[(ClickHouse<br/>MergeTree · 30-day TTL)]
+    L -->|Server-Sent Events| D[/live dashboard/]
     P -.-> M[/metrics/]
     E -.-> M
     B -.-> M
@@ -50,6 +57,13 @@ flowchart LR
   one venue failing can't take down the others.
 - **Observable** — Prometheus metrics for messages, parse errors, trades, book
   gaps, resyncs, sink batch size, flush latency, and end-to-end latency.
+- **Order-book firehose, opt-in.** The full L2 book (every level change) can be
+  persisted to a `book_updates` table — ~0.6 GB/day — bounded by a 30-day
+  `TTL`. Off by default since it's ~1000× the volume of trades.
+- **Live streaming dashboard.** A self-contained web UI — cross-venue quote grid
+  (best bid/ask per venue), an order-book depth ladder, and a time & sales tape —
+  that reads the engine's **in-memory** book state and is pushed over
+  **Server-Sent Events** (one connection, no polling).
 
 ## Quick start
 
@@ -98,11 +112,37 @@ sink:
   buffer: 20000           # backpressure bound
 metrics:
   addr: ":9090"           # /metrics; empty disables
+dashboard:
+  addr: ":8080"           # live web dashboard; empty disables
+persist_books: false      # also record the full L2 firehose (30-day TTL)
 venues:
   - { name: coinbase, symbols: [BTC-USD, ETH-USD] }
   - { name: kraken,   symbols: [BTC/USD, ETH/USD] }
   - { name: okx,      symbols: [BTC-USDT, ETH-USDT] }
 ```
+
+## Live dashboard
+
+With `dashboard.addr` set, tickstore serves a self-contained live dashboard (no
+external assets or build step). It reads the engine's **in-memory** book state —
+so it stays readable no matter how fast the feed runs — and pushes updates over a
+single **Server-Sent Events** connection instead of polling:
+
+- **Quotes** — best bid/ask per venue, grouped by market, best-across-venues
+  highlighted, with a live last-trade tick.
+- **Order book** — a depth ladder with cumulative-size bars for a selected market.
+- **Time & sales** — the trade tape, large prints highlighted.
+- **Health** — total rows, storage, live insert rate, and book gaps/resyncs.
+
+It binds to localhost, so reach it over an SSH tunnel:
+
+```sh
+ssh -L 8080:localhost:8080 user@your-server   # then open http://localhost:8080
+```
+
+<!-- For the strongest first impression, add a screenshot:
+     ![tickstore dashboard](docs/dashboard.png)  -->
+
 
 ## Deploying to a VPS
 
@@ -138,11 +178,11 @@ ssh -L 9090:localhost:9090 -L 8123:localhost:8123 user@your-server
 and survives restarts. Trades are ~1 GB/month for the default six symbols. Full
 L2 order books ("the firehose") can also be persisted to the `book_updates`
 table by setting `persist_books: true` in the config — it's off by default
-because books are far higher volume than trades (measured ~180 book updates/sec
+because books are far higher volume than trades (measured ~500 book updates/sec
 vs. a few trades/sec across the six default symbols). ClickHouse compresses them
-to ~12 bytes/row, so the firehose runs ~0.15–0.2 GB/day; with the table's 30-day
-TTL (keyed on `ts_received`) that settles around ~5–6 GB steady state — bounded
-enough to share the boot disk, though a dedicated volume gives headroom.
+to ~13 bytes/row, so the firehose runs ~0.6 GB/day; with the table's 30-day TTL
+(keyed on `ts_received`) that settles around ~18 GB steady state — which fits the
+boot disk, though a dedicated volume gives room to add venues or symbols.
 
 **Updating.** `git pull && docker compose up -d --build`.
 
@@ -202,7 +242,9 @@ internal/venue/     Venue/Handler interfaces, shared reconnect
     kraken/         connector + book with CRC32 checksum
     okx/            connector + book with seqId gap detection
 internal/book/      venue-agnostic L2 engine: apply, gap detect, resync
-internal/sink/      ClickHouse batching writer
+internal/sink/      ClickHouse batching writer (trades + book_updates)
+internal/live/      in-memory current book + tape for the dashboard
+internal/dashboard/ SSE server + self-contained live web UI
 internal/metrics/   Prometheus collectors + /metrics
 internal/config/    YAML config
 ```
@@ -225,7 +267,9 @@ Every significant decision — and its trade-offs and alternatives — is record
 [docs/DECISIONS.md](docs/DECISIONS.md); the per-milestone narrative is in
 [docs/milestones/](docs/milestones/).
 
-## Non-goals (v1)
+## Non-goals
 
-No trading or authenticated endpoints, no historical backfill beyond what resync
-needs, no UI. Public market data only.
+No trading, order placement, or authenticated/private endpoints, and no
+historical backfill beyond what a resync needs — public market data only. The
+dashboard is a read-only monitoring view, bound to localhost (reach it over an
+SSH tunnel), not a public service.
