@@ -70,6 +70,7 @@
   .qgroup .pair .q { color: var(--muted); font-weight: 500; }
   .qgroup .meta { margin-left: auto; color: var(--dim); font-size: 11px; }
   .qgroup .meta b { color: var(--text); font-weight: 600; }
+  .qgroup .meta .arb { color: var(--warn); } .qgroup .meta .arb b { color: var(--warn); }
   table.q { width: 100%; border-collapse: collapse; }
   table.q th { color: var(--muted); font-weight: 500; font-size: 9.5px; text-transform: uppercase;
     letter-spacing: .6px; text-align: right; padding: 3px 14px 3px 0; }
@@ -203,10 +204,17 @@ function renderQuotes(quotes){
     const bestBid = Math.max(0, ...g.rows.map(r=>r.bid||0));
     const asks = g.rows.map(r=>r.ask).filter(a=>a>0);
     const bestAsk = asks.length ? Math.min(...asks) : 0;
-    const spread = (bestBid && bestAsk) ? bestAsk-bestBid : 0;
-    const mid = (bestBid && bestAsk) ? (bestBid+bestAsk)/2 : 0;
+    // Average of the venues' mids — stable even when venues momentarily cross.
+    const mids = g.rows.filter(r=>r.bid&&r.ask).map(r=>(r.bid+r.ask)/2);
+    const mid = mids.length ? mids.reduce((a,b)=>a+b,0)/mids.length : 0;
+    // edge = best bid across venues − best ask across venues. Positive means the
+    // consolidated book is crossed: a real cross-venue arbitrage, not a spread.
+    const edge = (bestBid && bestAsk) ? bestBid-bestAsk : 0;
+    const metaRight = g.rows.length<2 ? (bestBid&&bestAsk ? `spread <b>${px(bestAsk-bestBid)}</b>` : "")
+      : edge>0 ? `<span class="arb">arb <b>+${px(edge)}</b></span>`
+      : `x-venue <b>${px(-edge)}</b>`;
     html += `<div class="qgroup"><span class="pair">${g.base} <span class="q">· ${g.quote}</span></span>`+
-      `<span class="meta">mid <b>${px(mid)}</b> &nbsp; spread <b>${spread?px(spread):"—"}</b></span></div>`+
+      `<span class="meta">mid <b>${px(mid)}</b> &nbsp; ${metaRight}</span></div>`+
       `<table class="q"><thead><tr><th>Venue</th><th class="sym">Symbol</th>`+
       `<th>Bid sz</th><th>Bid</th><th>Ask</th><th>Ask sz</th><th>Spread</th><th>Last</th></tr></thead><tbody>`;
     for(const q of g.rows){
