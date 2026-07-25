@@ -576,3 +576,40 @@ on `ts_received`.
 **Revisit.** Measure real GB/day before sizing the volume. If query patterns
 turn out to want current depth rather than history, add a periodic
 materialized snapshot table alongside (not instead of) the delta stream.
+
+---
+
+## D22 — Dashboard reflects live in-memory engine state, not a DB replay
+*2026-07-25*
+
+**Decision.** The dashboard's market views — the cross-venue quote grid (BBO) and
+the depth ladder — read from an in-memory `internal/live.Registry` that the book
+connectors update via their existing `BookObserver` hook, rather than querying
+`book_updates` in ClickHouse. The registry keeps only current state per market
+(top-of-book + a few depth levels + last trade), so it's O(venues × symbols) and
+independent of feed volume. ClickHouse is still the source for storage stats and
+the (low-volume) trade tape. Book connectors now run whenever the dashboard *or*
+persistence is enabled; the live views don't require `persist_books`.
+
+**Why.**
+- *Readable under the firehose.* At ~180–700 book updates/sec, a raw scrolling
+  feed is noise. Traders look at current BBO, depth, and time&sales — all
+  derivable from current state. Keeping state, not streaming deltas, is what
+  makes the view stay legible as volume grows.
+- *Cheap and correct.* Reconstructing the current book from `book_updates` in SQL
+  would mean replaying deltas since the last snapshot per market on every poll —
+  heavy and fragile. The engine already maintains the reconstructed book; the
+  dashboard should mirror that, which is also how real market-data UIs work
+  (reflect the ticker plant's state, not the tick archive).
+
+**Cost.**
+- The dashboard shows *live* state, which can differ slightly from what's
+  persisted (e.g. during a resync). That's the right trade for a live view; the
+  tape and stats still come from the durable store.
+- A typed-nil foot-gun: the observer must be passed as a genuine nil interface
+  when absent, or the connector's `observer != nil` guard would call through a
+  nil `*Registry`. Handled in `bookConnector`.
+
+**Revisit.** If we want historical replay ("show me the book at 14:32:05"), that
+comes from `book_updates` on a separate view, not this registry. Sparklines for
+rate/latency would want a small in-process time series too.

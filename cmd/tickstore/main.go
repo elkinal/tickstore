@@ -20,6 +20,7 @@ import (
 	"github.com/elkinal/tickstore/internal/book"
 	"github.com/elkinal/tickstore/internal/config"
 	"github.com/elkinal/tickstore/internal/dashboard"
+	"github.com/elkinal/tickstore/internal/live"
 	"github.com/elkinal/tickstore/internal/metrics"
 	"github.com/elkinal/tickstore/internal/norm"
 	"github.com/elkinal/tickstore/internal/sink"
@@ -52,14 +53,21 @@ func (stdoutHandler) OnTrade(t norm.Trade) {
 }
 
 // tradeSink adapts a trade Batcher to venue.Handler: it records per-trade
-// metrics (the Batcher itself is metric-agnostic) and queues the row.
-type tradeSink struct{ b *sink.Batcher[norm.Trade] }
+// metrics (the Batcher itself is metric-agnostic), updates the live registry for
+// the dashboard, and queues the row. reg may be nil.
+type tradeSink struct {
+	b   *sink.Batcher[norm.Trade]
+	reg *live.Registry
+}
 
-// OnTrade records metrics and enqueues the trade for batched insertion.
+// OnTrade records metrics, updates live state, and enqueues the trade.
 func (s tradeSink) OnTrade(t norm.Trade) {
 	metrics.Trades.WithLabelValues(t.Venue).Inc()
 	metrics.E2ELatencySeconds.WithLabelValues(t.Venue).
 		Observe(t.TsReceived.Sub(t.TsExchange).Seconds())
+	if s.reg != nil {
+		s.reg.OnTrade(t)
+	}
 	s.b.Add(t)
 }
 
@@ -114,7 +122,7 @@ func main() {
 	chCfg := sink.ClickHouseConfig{
 		Addr: *chAddr, Database: *chDB, Username: *chUser, Password: *chPass,
 	}
-	handler, ch, onShutdown, err := buildHandler(ctx, chCfg, sink.Config{Logger: log}, log)
+	handler, ch, onShutdown, err := buildHandler(ctx, chCfg, sink.Config{Logger: log}, nil, log)
 	if err != nil {
 		log.Error("startup failed", "error", err)
 		os.Exit(1)
@@ -157,7 +165,15 @@ func runConfig(ctx context.Context, path string, log *slog.Logger) {
 		MaxDelay: time.Duration(cfg.Sink.MaxDelay),
 		Buffer:   cfg.Sink.Buffer,
 	}
-	handler, ch, onShutdown, err := buildHandler(ctx, chCfg, sinkCfg, log)
+	// The dashboard reads live engine state (books + last trades) from an
+	// in-memory registry, so build one when it's enabled. It's independent of
+	// persistence: the dashboard's live views work whether or not books are saved.
+	var reg *live.Registry
+	if cfg.ClickHouse.Addr != "" && cfg.Dashboard.Addr != "" {
+		reg = live.NewRegistry()
+	}
+
+	handler, ch, onShutdown, err := buildHandler(ctx, chCfg, sinkCfg, reg, log)
 	if err != nil {
 		log.Error("startup failed", "error", err)
 		os.Exit(1)
@@ -182,8 +198,8 @@ func runConfig(ctx context.Context, path string, log *slog.Logger) {
 	}
 
 	go metrics.Serve(ctx, cfg.Metrics.Addr, log)
-	if ch != nil {
-		go dashboard.Serve(ctx, cfg.Dashboard.Addr, ch, log)
+	if ch != nil && reg != nil {
+		go dashboard.Serve(ctx, cfg.Dashboard.Addr, ch, reg, log)
 	}
 
 	// Build every connector before starting, so a bad venue name fails fast.
@@ -197,11 +213,12 @@ func runConfig(ctx context.Context, path string, log *slog.Logger) {
 		conns = append(conns, conn)
 	}
 	// Book connectors run independently of the trade handler, each streaming its
-	// venue's L2 book into the shared book sink.
+	// venue's L2 book into the shared book sink (persistence) and/or the live
+	// registry (dashboard). Run them if either is enabled.
 	var bookConns []bookRunner
-	if books != nil {
+	if books != nil || reg != nil {
 		for _, v := range cfg.Venues {
-			bc, err := bookConnector(v.Name, v.Symbols, books, log)
+			bc, err := bookConnector(v.Name, v.Symbols, books, reg, log)
 			if err != nil {
 				log.Error("startup failed", "error", err)
 				os.Exit(1)
@@ -255,15 +272,30 @@ type bookRunner interface {
 	Run(context.Context) error
 }
 
-// bookConnector builds the book connector for the named venue, wired to sink.
-func bookConnector(name string, symbols []string, sink venue.BookSink, log *slog.Logger) (bookRunner, error) {
+// bookConnector builds the book connector for the named venue, wired to sink
+// (persistence, may be nil) and reg (live dashboard state, may be nil). reg is
+// passed as a nil interface when absent so the connector's observer stays truly
+// nil rather than a typed-nil that would panic on the first update.
+func bookConnector(name string, symbols []string, sink venue.BookSink, reg *live.Registry, log *slog.Logger) (bookRunner, error) {
 	switch name {
 	case "coinbase":
-		return coinbase.NewBook(symbols, nil, sink, log), nil
+		var obs coinbase.BookObserver
+		if reg != nil {
+			obs = reg
+		}
+		return coinbase.NewBook(symbols, obs, sink, log), nil
 	case "kraken":
-		return kraken.NewBook(symbols, nil, sink, log), nil
+		var obs kraken.BookObserver
+		if reg != nil {
+			obs = reg
+		}
+		return kraken.NewBook(symbols, obs, sink, log), nil
 	case "okx":
-		return okx.NewBook(symbols, nil, sink, log), nil
+		var obs okx.BookObserver
+		if reg != nil {
+			obs = reg
+		}
+		return okx.NewBook(symbols, obs, sink, log), nil
 	default:
 		return nil, fmt.Errorf("unknown venue %q (want coinbase, kraken, or okx)", name)
 	}
@@ -339,7 +371,7 @@ func (p *bookPrinter) OnBook(b *book.Book) {
 // printing to stdout, so callers can build a book sink on the same connection),
 // and a hook that flushes the trade batcher after the connector stops. The
 // caller owns closing ch (after every batcher on it has flushed).
-func buildHandler(ctx context.Context, cfg sink.ClickHouseConfig, sinkCfg sink.Config, log *slog.Logger) (venue.Handler, *sink.ClickHouse, func(), error) {
+func buildHandler(ctx context.Context, cfg sink.ClickHouseConfig, sinkCfg sink.Config, reg *live.Registry, log *slog.Logger) (venue.Handler, *sink.ClickHouse, func(), error) {
 	if cfg.Addr == "" {
 		return stdoutHandler{}, nil, nil, nil
 	}
@@ -363,5 +395,5 @@ func buildHandler(ctx context.Context, cfg sink.ClickHouseConfig, sinkCfg sink.C
 			log.Error("sink did not flush cleanly", "error", err)
 		}
 	}
-	return tradeSink{batcher}, ch, flush, nil
+	return tradeSink{b: batcher, reg: reg}, ch, flush, nil
 }
