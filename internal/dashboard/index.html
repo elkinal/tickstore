@@ -10,121 +10,115 @@
     --line2: #141a25; --text: #cdd6e3; --dim: #8a93a3; --muted: #5c6575;
     --accent: #63a4ff; --buy: #26c281; --sell: #f0616d; --warn: #e0a53b;
     --buy-bg: rgba(38,194,129,.11); --sell-bg: rgba(240,97,109,.11);
-    --best-bid: rgba(38,194,129,.16); --best-ask: rgba(240,97,109,.16);
-    --sp: 8px;
+    --best-bid: rgba(38,194,129,.15); --best-ask: rgba(240,97,109,.15);
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; background: var(--bg); height: 100%; }
+  html, body { margin: 0; background: var(--bg); }
   body {
     color: var(--text);
     font-family: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
     font-size: 12.5px; line-height: 1.4; font-variant-numeric: tabular-nums;
-    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
   }
-  .wrap { max-width: 1520px; margin: 0 auto; padding: 0 16px 20px; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 0 14px 18px; }
 
-  /* ---- Header ---- */
   header {
-    display: flex; align-items: center; gap: 11px; height: 46px;
-    border-bottom: 1px solid var(--line); margin-bottom: 14px;
+    display: flex; align-items: center; gap: 10px; height: 46px;
+    border-bottom: 1px solid var(--line); margin-bottom: 12px;
   }
-  .brand { font-size: 14.5px; font-weight: 600; letter-spacing: .3px; }
+  .brand { font-size: 14px; font-weight: 600; letter-spacing: .3px; }
   .brand .k { color: var(--accent); }
-  .brand .s { color: var(--muted); font-weight: 400; margin-left: 2px; }
+  .brand .s { color: var(--muted); font-weight: 400; }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--buy); flex: none; }
   .dot.down { background: var(--sell); }
   .clock { margin-left: auto; color: var(--dim); font-size: 12px; letter-spacing: .5px; }
 
-  /* ---- Metric strip (flat, divided — not cards) ---- */
-  .metrics { display: flex; border: 1px solid var(--line); border-radius: 8px;
-    background: var(--panel); overflow: hidden; margin-bottom: 14px; }
-  .metric { flex: 1; padding: 11px 16px; border-right: 1px solid var(--line2); min-width: 0; }
-  .metric:last-child { border-right: 0; }
+  /* Metrics — flat, wraps on small screens */
+  .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+    background: var(--line2); border: 1px solid var(--line); border-radius: 8px;
+    overflow: hidden; margin-bottom: 12px; }
+  .metric { background: var(--panel); padding: 11px 15px; }
   .metric .k { color: var(--muted); font-size: 9.5px; text-transform: uppercase; letter-spacing: .9px; }
   .metric .v { font-size: 20px; font-weight: 600; margin-top: 5px; letter-spacing: -.3px; white-space: nowrap; }
   .metric .v small { font-size: 11px; color: var(--dim); font-weight: 400; letter-spacing: 0; }
   .metric.rate .v { color: var(--accent); }
   .metric .v.warn { color: var(--warn); }
-  .metric .sub { color: var(--muted); font-size: 10px; margin-top: 3px; white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis; }
+  .metric .sub { color: var(--muted); font-size: 10px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-  /* ---- Layout ---- */
-  .grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
-    gap: 12px; align-items: stretch; min-height: calc(100vh - 185px); }
-  @media (max-width: 960px) { .grid { grid-template-columns: 1fr; } }
-  .col { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
+  /* Quotes + Order book row (equal bounded height); tape strip below */
+  .top { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+    gap: 12px; height: clamp(340px, 50vh, 500px); }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
     display: flex; flex-direction: column; min-height: 0; }
-  .panel > .ph { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px;
+  .ph { display: flex; align-items: center; gap: 8px; height: 33px; padding: 0 13px;
     border-bottom: 1px solid var(--line); flex: none; }
-  .panel > .ph .t { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
-  .panel > .ph .n { margin-left: auto; color: var(--muted); font-size: 10.5px; }
-  .panel > .ph .n .accent { color: var(--dim); }
+  .ph .t { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+  .ph .n { margin-left: auto; color: var(--muted); font-size: 10px; }
+  .scroll { flex: 1; min-height: 0; overflow: auto; }
 
-  /* ---- Quotes ---- */
-  .qbody { padding: 2px 0 4px; }
-  .qgroup { padding: 7px 14px 3px; display: flex; align-items: baseline; gap: 12px;
+  /* Quotes */
+  .qgroup { padding: 8px 13px 3px; display: flex; align-items: baseline; gap: 10px;
     border-top: 1px solid var(--line2); }
   .qgroup:first-child { border-top: 0; }
   .qgroup .pair { font-size: 12.5px; font-weight: 700; letter-spacing: .3px; }
   .qgroup .pair .q { color: var(--muted); font-weight: 500; }
-  .qgroup .meta { margin-left: auto; color: var(--dim); font-size: 11px; }
-  .qgroup .meta b { color: var(--text); font-weight: 600; }
-  .qgroup .meta .arb { color: var(--warn); } .qgroup .meta .arb b { color: var(--warn); }
+  .qgroup .mid { margin-left: auto; color: var(--dim); font-size: 11px; }
+  .qgroup .mid b { color: var(--text); font-weight: 600; }
   table.q { width: 100%; border-collapse: collapse; }
   table.q th { color: var(--muted); font-weight: 500; font-size: 9.5px; text-transform: uppercase;
-    letter-spacing: .6px; text-align: right; padding: 3px 14px 3px 0; }
-  table.q th:first-child { padding-left: 14px; text-align: left; }
-  table.q th.sym { text-align: left; }
-  table.q td { padding: 3px 14px 3px 0; text-align: right; white-space: nowrap; }
-  table.q td:first-child { padding-left: 14px; text-align: left; }
-  table.q td.sym { text-align: left; color: var(--muted); }
+    letter-spacing: .5px; text-align: right; padding: 2px 13px 3px 0; }
+  table.q th:first-child { padding-left: 13px; text-align: left; }
+  table.q td { padding: 3px 13px 3px 0; text-align: right; white-space: nowrap; }
+  table.q td:first-child { padding-left: 13px; text-align: left; }
   table.q tr:hover td { background: var(--line2); }
   table.q .v { color: var(--accent); }
-  table.q .num { color: var(--text); }
-  table.q .sz { color: var(--dim); font-size: 11.5px; }
+  table.q .num { color: var(--text); } table.q .sp { color: var(--dim); }
   table.q .bid { color: var(--buy); } table.q .ask { color: var(--sell); }
-  table.q td.bbid { background: var(--best-bid); box-shadow: inset 2px 0 0 var(--buy); }
-  table.q td.bask { background: var(--best-ask); box-shadow: inset -2px 0 0 var(--sell); }
+  table.q td.bbid { background: var(--best-bid); }
+  table.q td.bask { background: var(--best-ask); }
   table.q .stale { color: var(--warn); }
   td.chg { animation: chg .45s ease; }
-  @keyframes chg { from { background: rgba(99,164,255,.28); } to { } }
-  @media (prefers-reduced-motion: reduce) { td.chg { animation: none; } .rows { scroll-behavior: auto; } }
+  @keyframes chg { from { background: rgba(99,164,255,.26); } to {} }
+  @media (prefers-reduced-motion: reduce) { td.chg { animation: none; } .scroll { scroll-behavior: auto; } }
 
-  /* ---- Order book ladder ---- */
-  .obright { height: 100%; }
-  .sel { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 12px; border-bottom: 1px solid var(--line); flex: none; }
-  .sel button { font: inherit; font-size: 10.5px; color: var(--dim); background: transparent;
-    border: 1px solid var(--line); border-radius: 5px; padding: 3px 8px; cursor: pointer; letter-spacing: .2px; }
+  /* Order book ladder */
+  .sel { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 11px; border-bottom: 1px solid var(--line); flex: none; }
+  .sel button { font: inherit; font-size: 10px; color: var(--dim); background: transparent;
+    border: 1px solid var(--line); border-radius: 5px; padding: 3px 7px; cursor: pointer; }
   .sel button:hover { color: var(--text); border-color: var(--muted); }
   .sel button.on { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
-  .ladder { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 0; }
-  .lhead { display: grid; grid-template-columns: 1fr 1fr; padding: 2px 14px 5px; color: var(--muted);
-    font-size: 9.5px; text-transform: uppercase; letter-spacing: .6px; }
-  .lhead span:last-child { text-align: right; }
-  .lrow { position: relative; display: grid; grid-template-columns: 1fr 1fr; padding: 1.5px 14px; z-index: 0; }
+  .lrow { position: relative; display: grid; grid-template-columns: 1fr 1fr; padding: 1.5px 13px; z-index: 0; }
   .lrow .bar { position: absolute; top: 1px; bottom: 1px; right: 0; z-index: -1; border-radius: 1px; }
   .lrow.ask .bar { background: var(--sell-bg); } .lrow.bid .bar { background: var(--buy-bg); }
   .lrow .px { text-align: left; font-weight: 500; }
   .lrow.ask .px { color: var(--sell); } .lrow.bid .px { color: var(--buy); }
   .lrow .sz { text-align: right; color: var(--text); }
-  .spreadrow { display: flex; justify-content: space-between; padding: 6px 14px; margin: 4px 0;
+  .spreadrow { display: flex; justify-content: space-between; padding: 6px 13px; margin: 3px 0;
     border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
     background: var(--panel2); color: var(--muted); font-size: 11px; }
   .spreadrow b { color: var(--text); font-weight: 600; }
 
-  /* ---- Time & Sales ---- */
-  .tape { flex: 1; min-height: 150px; }
-  .rows { flex: 1; min-height: 0; overflow-y: auto; padding: 3px 0; scroll-behavior: smooth; }
-  .trow { display: grid; grid-template-columns: 62px 70px 84px 40px 1fr 96px; gap: 10px;
-    padding: 1.5px 14px; white-space: nowrap; }
+  /* Time & Sales — short strip */
+  .tape { height: 200px; margin-top: 12px; }
+  .trow { display: grid; grid-template-columns: 60px 72px 78px 40px 1fr auto; gap: 10px;
+    padding: 1.5px 13px; white-space: nowrap; }
   .trow .t { color: var(--muted); } .trow .v { color: var(--accent); } .trow .sym { color: var(--dim); }
   .trow .side.buy { color: var(--buy); } .trow .side.sell { color: var(--sell); }
   .trow .sz { text-align: right; color: var(--dim); } .trow .px { text-align: right; font-weight: 500; }
   .trow.buy .px { color: var(--buy); } .trow.sell .px { color: var(--sell); }
   .trow.big { background: rgba(224,165,59,.09); }
   .trow.big .sz { color: var(--warn); font-weight: 600; }
-  .empty { color: var(--muted); padding: 16px 14px; }
+  .empty { color: var(--muted); padding: 15px 13px; }
+
+  /* Mobile */
+  @media (max-width: 820px) {
+    .metrics { grid-template-columns: repeat(2, 1fr); }
+    .top { grid-template-columns: 1fr; height: auto; }
+    .top .panel { height: 300px; }
+    .tape { height: 220px; }
+    .trow { grid-template-columns: 54px 66px 40px 1fr auto; }
+    .trow .sym { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -136,33 +130,27 @@
   </header>
 
   <div class="metrics">
-    <div class="metric"><div class="k">Total rows</div><div class="v" id="totalRows">—</div><div class="sub">trades + book</div></div>
+    <div class="metric"><div class="k">Rows stored</div><div class="v" id="totalRows">—</div><div class="sub">trades + book</div></div>
     <div class="metric"><div class="k">Storage</div><div class="v" id="bytes">—</div><div class="sub">compressed · 30-day TTL</div></div>
     <div class="metric rate"><div class="k">Insert rate</div><div class="v" id="rate">—<small> /s</small></div><div class="sub">all venues, live</div></div>
     <div class="metric"><div class="k">Gaps / resyncs</div><div class="v" id="gaps">—</div><div class="sub">book integrity</div></div>
-    <div class="metric"><div class="k">Trades</div><div class="v" id="trRows">—</div><div class="sub" id="trBytes"></div></div>
-    <div class="metric"><div class="k">Book updates</div><div class="v" id="bkRows">—</div><div class="sub" id="bkBytes"></div></div>
   </div>
 
-  <div class="grid">
-    <div class="col">
-      <div class="panel">
-        <div class="ph"><span class="t">Quotes</span><span class="n">best bid / ask per venue · <span class="accent">best highlighted</span></span></div>
-        <div class="qbody" id="quotes"><div class="empty">waiting for books…</div></div>
-      </div>
-      <div class="panel tape">
-        <div class="ph"><span class="t">Time &amp; Sales</span><span class="n">large prints highlighted</span></div>
-        <div class="rows" id="tapeFeed"><div class="empty">waiting for trades…</div></div>
-      </div>
+  <div class="top">
+    <div class="panel">
+      <div class="ph"><span class="t">Quotes</span><span class="n">best highlighted</span></div>
+      <div class="scroll" id="quotes"><div class="empty">waiting for books…</div></div>
     </div>
+    <div class="panel">
+      <div class="ph"><span class="t">Order book</span><span class="n" id="obNote">—</span></div>
+      <div class="sel" id="sel"></div>
+      <div class="scroll" id="ladder"><div class="empty">select a market…</div></div>
+    </div>
+  </div>
 
-    <div class="col">
-      <div class="panel obright">
-        <div class="ph"><span class="t">Order book</span><span class="n" id="obNote">—</span></div>
-        <div class="sel" id="sel"></div>
-        <div class="ladder" id="ladder"><div class="empty">select a market…</div></div>
-      </div>
-    </div>
+  <div class="panel tape">
+    <div class="ph"><span class="t">Time &amp; Sales</span><span class="n">large prints highlighted</span></div>
+    <div class="scroll" id="tapeFeed"><div class="empty">waiting for trades…</div></div>
   </div>
 </div>
 
@@ -170,8 +158,8 @@
 "use strict";
 const $ = id => document.getElementById(id);
 let tapeCursor = 0, prevTotal = null, prevAt = null, selected = null;
-const prevQ = {};                 // venue|symbol -> {bid,ask} for change flashes
-const BIG_NOTIONAL = 15000;       // USD notional above which a print is "large"
+const prevQ = {};
+const BIG_NOTIONAL = 15000;
 
 const nf2 = new Intl.NumberFormat("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
 const fmtInt = n => Math.round(n).toLocaleString("en-US");
@@ -180,10 +168,8 @@ function px(n){ if(!n) return "—"; return n>=1000 ? nf2.format(n) : n.toFixed(
 function sz(n){ if(n===0) return "0"; return parseFloat(Number(n).toFixed(4)).toString(); }
 function trim(s){ return String(s).replace(/(\.\d*?)0+$/,"$1").replace(/\.$/,""); }
 const pad = n => String(n).padStart(2,"0");
-const clock = () => { const d=new Date(); return pad(d.getHours())+":"+pad(d.getMinutes())+":"+pad(d.getSeconds()); };
 function setLive(ok){ $("dot").classList.toggle("down", !ok); }
 
-// ---------- Quotes ----------
 async function pollBook(){
   try {
     const quotes = ((await (await fetch("/api/book")).json()).quotes) || [];
@@ -204,19 +190,11 @@ function renderQuotes(quotes){
     const bestBid = Math.max(0, ...g.rows.map(r=>r.bid||0));
     const asks = g.rows.map(r=>r.ask).filter(a=>a>0);
     const bestAsk = asks.length ? Math.min(...asks) : 0;
-    // Average of the venues' mids — stable even when venues momentarily cross.
     const mids = g.rows.filter(r=>r.bid&&r.ask).map(r=>(r.bid+r.ask)/2);
     const mid = mids.length ? mids.reduce((a,b)=>a+b,0)/mids.length : 0;
-    // edge = best bid across venues − best ask across venues. Positive means the
-    // consolidated book is crossed: a real cross-venue arbitrage, not a spread.
-    const edge = (bestBid && bestAsk) ? bestBid-bestAsk : 0;
-    const metaRight = g.rows.length<2 ? (bestBid&&bestAsk ? `spread <b>${px(bestAsk-bestBid)}</b>` : "")
-      : edge>0 ? `<span class="arb">arb <b>+${px(edge)}</b></span>`
-      : `x-venue <b>${px(-edge)}</b>`;
     html += `<div class="qgroup"><span class="pair">${g.base} <span class="q">· ${g.quote}</span></span>`+
-      `<span class="meta">mid <b>${px(mid)}</b> &nbsp; ${metaRight}</span></div>`+
-      `<table class="q"><thead><tr><th>Venue</th><th class="sym">Symbol</th>`+
-      `<th>Bid sz</th><th>Bid</th><th>Ask</th><th>Ask sz</th><th>Spread</th><th>Last</th></tr></thead><tbody>`;
+      `<span class="mid">mid <b>${px(mid)}</b></span></div>`+
+      `<table class="q"><thead><tr><th>Venue</th><th>Bid</th><th>Ask</th><th>Spread</th><th>Last</th></tr></thead><tbody>`;
     for(const q of g.rows){
       const key=q.venue+"|"+q.symbol, pv=prevQ[key]||{};
       const bf = pv.bid!==undefined && pv.bid!==q.bid ? " chg":"";
@@ -225,17 +203,15 @@ function renderQuotes(quotes){
       const bb = g.rows.length>1 && q.bid && q.bid===bestBid ? " bbid":"";
       const ba = g.rows.length>1 && q.ask && q.ask===bestAsk ? " bask":"";
       const stale = (!q.synced || q.age_ms>4000) ? ' <span class="stale">●</span>':"";
-      html += `<tr><td class="v">${q.venue}${stale}</td><td class="sym">${q.symbol}</td>`+
-        `<td class="sz">${sz(q.bid_size)}</td><td class="bid${bb}${bf}">${px(q.bid)}</td>`+
-        `<td class="ask${ba}${af}">${px(q.ask)}</td><td class="sz">${sz(q.ask_size)}</td>`+
-        `<td class="num">${q.spread?px(q.spread):"—"}</td><td class="num">${px(q.last)}</td></tr>`;
+      html += `<tr><td class="v">${q.venue}${stale}</td>`+
+        `<td class="bid${bb}${bf}">${px(q.bid)}</td><td class="ask${ba}${af}">${px(q.ask)}</td>`+
+        `<td class="sp">${q.spread?px(q.spread):"—"}</td><td class="num">${px(q.last)}</td></tr>`;
     }
     html += `</tbody></table>`;
   }
   $("quotes").innerHTML = html;
 }
 
-// ---------- Market selector + ladder ----------
 function renderSel(quotes){
   const host=$("sel");
   const sig = quotes.map(q=>q.venue+q.symbol).join(",");
@@ -256,20 +232,20 @@ async function pollDepth(){
 function renderLadder(d){
   $("obNote").textContent = `${d.venue} ${d.symbol}`;
   const host=$("ladder");
-  if(!d.found || (!d.bids.length && !d.asks.length)){ host.innerHTML='<div class="empty">no book yet…</div>'; return; }
-  const maxCum = Math.max(d.bids.at(-1)?.cum||0, d.asks.at(-1)?.cum||0, 1e-9);
-  const bb=d.bids[0]?.price||0, ba=d.asks[0]?.price||0;
+  const asks=(d.asks||[]).slice(0,10), bids=(d.bids||[]).slice(0,10);
+  if(!d.found || (!bids.length && !asks.length)){ host.innerHTML='<div class="empty">no book yet…</div>'; return; }
+  const maxCum = Math.max(bids.at(-1)?.cum||0, asks.at(-1)?.cum||0, 1e-9);
+  const bb=bids[0]?.price||0, ba=asks[0]?.price||0;
   const spread=(bb&&ba)?ba-bb:0, mid=(bb&&ba)?(bb+ba)/2:0;
   const row=(l,side)=>{ const w=Math.max(1.5,(l.cum/maxCum)*100);
     return `<div class="lrow ${side}"><span class="bar" style="width:${w}%"></span><span class="px">${px(l.price)}</span><span class="sz">${sz(l.size)}</span></div>`; };
-  let h = `<div class="lhead"><span>Price</span><span>Size</span></div>`;
-  for(let i=d.asks.length-1;i>=0;i--) h+=row(d.asks[i],"ask");
+  let h="";
+  for(let i=asks.length-1;i>=0;i--) h+=row(asks[i],"ask");
   h += `<div class="spreadrow"><span>spread <b>${spread?px(spread):"—"}</b></span><span>mid <b>${mid?px(mid):"—"}</b></span></div>`;
-  for(let i=0;i<d.bids.length;i++) h+=row(d.bids[i],"bid");
+  for(let i=0;i<bids.length;i++) h+=row(bids[i],"bid");
   host.innerHTML=h;
 }
 
-// ---------- Time & Sales ----------
 async function pollTape(){
   try {
     const trades=((await (await fetch(`/api/tape?ts=${tapeCursor}`)).json()).trades)||[];
@@ -289,21 +265,16 @@ function appendTape(trades){
     frag.appendChild(div);
   }
   feed.appendChild(frag);
-  while(feed.childElementCount>300) feed.removeChild(feed.firstChild);
+  while(feed.childElementCount>250) feed.removeChild(feed.firstChild);
   if(near) feed.scrollTop=feed.scrollHeight;
 }
 
-// ---------- Stats ----------
 async function pollStats(){
   try {
     const s=await (await fetch("/api/stats")).json();
     $("clock").textContent=s.server_time+" UTC";
     $("totalRows").textContent=fmtInt(s.total_rows);
     $("bytes").textContent=fmtBytes(s.total_bytes);
-    for(const t of s.tables){
-      if(t.name==="trades"){ $("trRows").textContent=fmtInt(t.rows); $("trBytes").textContent=fmtBytes(t.bytes)+" on disk"; }
-      else if(t.name==="book_updates"){ $("bkRows").textContent=fmtInt(t.rows); $("bkBytes").textContent=fmtBytes(t.bytes)+" on disk"; }
-    }
     const nowMs=Date.now();
     if(prevTotal!==null){ const dt=(nowMs-prevAt)/1000, rate=dt>0?Math.max(0,(s.total_rows-prevTotal)/dt):0;
       $("rate").innerHTML=fmtInt(rate)+'<small> /s</small>'; }
