@@ -45,6 +45,7 @@ services:
       - ./config.docker.yaml:/etc/tickstore/config.yaml:ro
     ports:
       - "127.0.0.1:9090:9090" # Prometheus /metrics
+      - "127.0.0.1:8080:8080" # live dashboard (reach it over an SSH tunnel)
 
 volumes:
   clickhouse-data:

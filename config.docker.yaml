@@ -18,6 +18,10 @@ metrics:
 dashboard:
   addr: ":8080"
 
+# Stream full L2 order books to book_updates ("the firehose"). ~0.15-0.2 GB/day
+# compressed for the six symbols below, bounded by the table's 30-day TTL.
+persist_books: true
+
 venues:
   - name: coinbase
     symbols: [BTC-USD, ETH-USD]
