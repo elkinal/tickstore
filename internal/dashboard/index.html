@@ -130,9 +130,12 @@
   /* Mobile */
   @media (max-width: 820px) {
     .metrics { grid-template-columns: repeat(2, 1fr); }
-    .top { grid-template-columns: 1fr; grid-template-rows: none;
-      grid-template-areas: "quotes" "ob" "tape"; height: auto; }
-    .quotes-panel { height: 300px; } .ob-panel { height: 440px; } .tape-panel { height: 240px; }
+    /* Stack panels at full content height and let the page scroll — no inner
+       scroll regions, everything laid out. */
+    .top { display: block; height: auto; }
+    .top > .panel { margin-bottom: 12px; }
+    .quotes-panel, .ob-panel, .tape-panel { height: auto; }
+    .scroll { overflow: visible; }
     .trow { grid-template-columns: 54px 66px 40px 1fr auto; }
     .trow .sym { display: none; }
   }
@@ -176,6 +179,9 @@ const $ = id => document.getElementById(id);
 let tapeCursor = 0, prevTotal = null, prevAt = null, selected = null;
 const prevQ = {};
 const BIG_NOTIONAL = 15000;
+// On mobile the tape is laid out in full (no inner scroll), so keep fewer rows
+// than on desktop where it scrolls within a fixed panel.
+const TAPE_MAX = matchMedia("(max-width: 820px)").matches ? 30 : 250;
 
 const nf2 = new Intl.NumberFormat("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
 const fmtInt = n => Math.round(n).toLocaleString("en-US");
@@ -319,7 +325,7 @@ function appendTape(trades){
     frag.appendChild(div);
   }
   feed.appendChild(frag);
-  while(feed.childElementCount>250) feed.removeChild(feed.firstChild);
+  while(feed.childElementCount>TAPE_MAX) feed.removeChild(feed.firstChild);
   if(near) feed.scrollTop=feed.scrollHeight;
 }
 
