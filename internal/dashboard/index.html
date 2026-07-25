@@ -65,20 +65,26 @@
   .scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
   /* Quotes */
+  /* One fixed-layout table for all groups: columns keep a constant width, so
+     values never reflow when a digit count changes or a tick arrow appears, and
+     BTC and ETH rows line up. */
+  table.q { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  table.q col.cv { width: 25%; }
+  table.q th { color: var(--muted); font-weight: 500; font-size: 9.5px; text-transform: uppercase;
+    letter-spacing: .5px; text-align: right; padding: 4px 13px 4px 0;
+    position: sticky; top: 0; background: var(--panel); }
+  table.q th:first-child { padding-left: 13px; text-align: left; }
+  table.q td { padding: 3px 13px 3px 0; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  table.q td:first-child { padding-left: 13px; text-align: left; }
+  table.q tr:hover td { background: var(--line2); }
+  table.q tr.grow td { padding: 0; }
   .qgroup { padding: 8px 13px 3px; display: flex; align-items: baseline; gap: 10px;
     border-top: 1px solid var(--line2); }
-  .qgroup:first-child { border-top: 0; }
+  table.q tr.grow:first-child .qgroup { border-top: 0; }
   .qgroup .pair { font-size: 12.5px; font-weight: 700; letter-spacing: .3px; }
   .qgroup .pair .q { color: var(--muted); font-weight: 500; }
   .qgroup .mid { margin-left: auto; color: var(--dim); font-size: 11px; }
   .qgroup .mid b { color: var(--text); font-weight: 600; }
-  table.q { width: 100%; border-collapse: collapse; }
-  table.q th { color: var(--muted); font-weight: 500; font-size: 9.5px; text-transform: uppercase;
-    letter-spacing: .5px; text-align: right; padding: 2px 13px 3px 0; }
-  table.q th:first-child { padding-left: 13px; text-align: left; }
-  table.q td { padding: 3px 13px 3px 0; text-align: right; white-space: nowrap; }
-  table.q td:first-child { padding-left: 13px; text-align: left; }
-  table.q tr:hover td { background: var(--line2); }
   table.q .v { color: var(--accent); }
   table.q .num { color: var(--text); }
   table.q .up { color: var(--buy); } table.q .down { color: var(--sell); }
@@ -192,7 +198,7 @@ function renderQuotes(quotes){
   if(!quotes.length) return;
   const groups = {};
   for(const q of quotes){ const k=q.base+"·"+q.quote; (groups[k] ||= {base:q.base, quote:q.quote, rows:[]}).rows.push(q); }
-  let html = "";
+  let body = "";
   for(const k of Object.keys(groups).sort()){
     const g = groups[k];
     const bestBid = Math.max(0, ...g.rows.map(r=>r.bid||0));
@@ -200,9 +206,9 @@ function renderQuotes(quotes){
     const bestAsk = asks.length ? Math.min(...asks) : 0;
     const mids = g.rows.filter(r=>r.bid&&r.ask).map(r=>(r.bid+r.ask)/2);
     const mid = mids.length ? mids.reduce((a,b)=>a+b,0)/mids.length : 0;
-    html += `<div class="qgroup"><span class="pair">${g.base} <span class="q">· ${g.quote}</span></span>`+
-      `<span class="mid">mid <b>${px(mid)}</b></span></div>`+
-      `<table class="q"><thead><tr><th>Venue</th><th>Bid</th><th>Ask</th><th>Last</th></tr></thead><tbody>`;
+    body += `<tr class="grow"><td colspan="4"><div class="qgroup">`+
+      `<span class="pair">${g.base} <span class="q">· ${g.quote}</span></span>`+
+      `<span class="mid">mid <b>${px(mid)}</b></span></div></td></tr>`;
     for(const q of g.rows){
       const key=q.venue+"|"+q.symbol, pv=prevQ[key]||{};
       const bf = pv.bid!==undefined && pv.bid!==q.bid ? " chg":"";
@@ -214,13 +220,15 @@ function renderQuotes(quotes){
       const bb = g.rows.length>1 && q.bid && q.bid===bestBid ? " bbid":"";
       const ba = g.rows.length>1 && q.ask && q.ask===bestAsk ? " bask":"";
       const stale = (!q.synced || q.age_ms>4000) ? ' <span class="stale">●</span>':"";
-      html += `<tr><td class="v">${q.venue}${stale}</td>`+
+      body += `<tr><td class="v">${q.venue}${stale}</td>`+
         `<td class="bid${bb}${bf}">${px(q.bid)}</td><td class="ask${ba}${af}">${px(q.ask)}</td>`+
         `<td class="${lc}">${ar?`<span class="ar">${ar}</span> `:""}${px(q.last)}</td></tr>`;
     }
-    html += `</tbody></table>`;
   }
-  $("quotes").innerHTML = html;
+  $("quotes").innerHTML =
+    `<table class="q"><colgroup><col class="cv"><col><col><col></colgroup>`+
+    `<thead><tr><th>Venue</th><th>Bid</th><th>Ask</th><th>Last</th></tr></thead>`+
+    `<tbody>${body}</tbody></table>`;
 }
 
 function renderSel(quotes){
