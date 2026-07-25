@@ -89,7 +89,8 @@ func (r *Registry) OnTrade(t norm.Trade) {
 type Quote struct {
 	Venue     string  `json:"venue"`
 	Symbol    string  `json:"symbol"`
-	Base      string  `json:"base"` // BTC, ETH — the cross-venue grouping key
+	Base      string  `json:"base"`  // BTC, ETH
+	Quote     string  `json:"quote"` // USD, USDT — with Base, the cross-venue key
 	Bid       float64 `json:"bid"`
 	Ask       float64 `json:"ask"`
 	BidSize   float64 `json:"bid_size"`
@@ -114,8 +115,9 @@ func (r *Registry) Quotes() []Quote {
 	out := make([]Quote, 0, len(r.books))
 	now := time.Now()
 	for k, b := range r.books {
+		base, quote := splitSymbol(b.symbol)
 		q := Quote{
-			Venue: b.venue, Symbol: b.symbol, Base: baseAsset(b.symbol),
+			Venue: b.venue, Symbol: b.symbol, Base: base, Quote: quote,
 			Seq: b.seq, Gaps: b.gaps, Resyncs: b.resyncs, Synced: b.synced,
 			AgeMillis: now.Sub(b.updated).Milliseconds(),
 		}
@@ -177,15 +179,19 @@ func ladder(levels []norm.Level) []DepthRow {
 	return rows
 }
 
-// baseAsset extracts the base currency from a venue symbol so the same coin
-// lines up across venues: BTC-USD, BTC/USD, and BTC-USDT all map to "BTC".
-func baseAsset(symbol string) string {
+// splitSymbol separates a venue symbol into base and quote currency at the
+// separator: BTC-USD -> (BTC, USD), BTC/USD -> (BTC, USD), BTC-USDT -> (BTC,
+// USDT). Grouping the grid by (base, quote) keeps USD and USDT markets apart, so
+// a cross-venue best bid/ask never mixes quote currencies (which would show a
+// bogus negative spread from the USDT basis). A symbol with no separator returns
+// an empty quote.
+func splitSymbol(symbol string) (base, quote string) {
 	for i, c := range symbol {
 		if c == '-' || c == '/' {
-			return symbol[:i]
+			return symbol[:i], symbol[i+1:]
 		}
 	}
-	return symbol
+	return symbol, ""
 }
 
 // px and sz render fixed-point ints as decimals for display only; storage stays

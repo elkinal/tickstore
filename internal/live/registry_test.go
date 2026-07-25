@@ -7,17 +7,17 @@ import (
 	"github.com/elkinal/tickstore/internal/norm"
 )
 
-func TestBaseAsset(t *testing.T) {
-	tests := []struct{ symbol, want string }{
-		{"BTC-USD", "BTC"},
-		{"BTC/USD", "BTC"},
-		{"BTC-USDT", "BTC"},
-		{"ETH-USDT", "ETH"},
-		{"SOLUSD", "SOLUSD"}, // no separator: returned as-is
+func TestSplitSymbol(t *testing.T) {
+	tests := []struct{ symbol, base, quote string }{
+		{"BTC-USD", "BTC", "USD"},
+		{"BTC/USD", "BTC", "USD"},
+		{"BTC-USDT", "BTC", "USDT"},
+		{"ETH-USDT", "ETH", "USDT"},
+		{"SOLUSD", "SOLUSD", ""}, // no separator: whole string is base
 	}
 	for _, tt := range tests {
-		if got := baseAsset(tt.symbol); got != tt.want {
-			t.Errorf("baseAsset(%q) = %q, want %q", tt.symbol, got, tt.want)
+		if base, quote := splitSymbol(tt.symbol); base != tt.base || quote != tt.quote {
+			t.Errorf("splitSymbol(%q) = (%q, %q), want (%q, %q)", tt.symbol, base, quote, tt.base, tt.quote)
 		}
 	}
 }

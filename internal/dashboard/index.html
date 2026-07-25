@@ -6,110 +6,123 @@
 <title>tickstore · live</title>
 <style>
   :root {
-    --bg: #0b0e14; --panel: #11151f; --panel2: #0e1119; --line: #1e2635;
-    --text: #c9d3e0; --muted: #6b7688; --accent: #4da3ff;
-    --buy: #2ec46b; --sell: #ff5c6c; --snap: #f0b429;
-    --buy-bg: rgba(46,196,107,.14); --sell-bg: rgba(255,92,108,.14);
-    --best: rgba(77,163,255,.16);
+    --bg: #0a0c11; --panel: #0f131b; --panel2: #0c0f16; --line: #1c2432;
+    --line2: #141a25; --text: #cdd6e3; --dim: #8a93a3; --muted: #5c6575;
+    --accent: #63a4ff; --buy: #26c281; --sell: #f0616d; --warn: #e0a53b;
+    --buy-bg: rgba(38,194,129,.11); --sell-bg: rgba(240,97,109,.11);
+    --best-bid: rgba(38,194,129,.16); --best-ask: rgba(240,97,109,.16);
+    --sp: 8px;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; background: var(--bg); }
+  html, body { margin: 0; background: var(--bg); height: 100%; }
   body {
-    color: var(--text); font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    font-size: 13px; line-height: 1.45; font-variant-numeric: tabular-nums;
-    -webkit-font-smoothing: antialiased;
+    color: var(--text);
+    font-family: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+    font-size: 12.5px; line-height: 1.4; font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
   }
-  .wrap { max-width: 1400px; margin: 0 auto; padding-bottom: 24px; }
+  .wrap { max-width: 1520px; margin: 0 auto; padding: 0 16px 20px; }
 
+  /* ---- Header ---- */
   header {
-    display: flex; align-items: center; gap: 13px;
-    padding: 12px 18px; border-bottom: 1px solid var(--line); background: var(--panel);
-    position: sticky; top: 0; z-index: 5;
+    display: flex; align-items: center; gap: 11px; height: 46px;
+    border-bottom: 1px solid var(--line); margin-bottom: 14px;
   }
-  header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .4px; }
-  header h1 .tick { color: var(--accent); }
-  header h1 .sub { color: var(--muted); font-weight: 400; }
-  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--buy);
-    box-shadow: 0 0 0 0 rgba(46,196,107,.6); animation: pulse 2.4s infinite; }
-  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(46,196,107,.5)} 70%{box-shadow:0 0 0 7px rgba(46,196,107,0)} 100%{box-shadow:0 0 0 0 rgba(46,196,107,0)} }
-  @media (prefers-reduced-motion: reduce) { .dot{animation:none} .flash{animation:none!important} .rows{scroll-behavior:auto} }
-  .clock { margin-left: auto; color: var(--muted); }
+  .brand { font-size: 14.5px; font-weight: 600; letter-spacing: .3px; }
+  .brand .k { color: var(--accent); }
+  .brand .s { color: var(--muted); font-weight: 400; margin-left: 2px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--buy); flex: none; }
+  .dot.down { background: var(--sell); }
+  .clock { margin-left: auto; color: var(--dim); font-size: 12px; letter-spacing: .5px; }
 
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; padding: 14px 18px; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 12px 14px; }
-  .card .label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .7px; }
-  .card .value { font-size: 22px; font-weight: 600; margin-top: 6px; letter-spacing: -.4px; }
-  .card .value small { font-size: 11px; color: var(--muted); font-weight: 400; letter-spacing: 0; }
-  .card .sub { color: var(--muted); font-size: 10.5px; margin-top: 3px; }
-  .card.hot .value { color: var(--accent); }
-  .card .value.warn { color: var(--snap); }
+  /* ---- Metric strip (flat, divided — not cards) ---- */
+  .metrics { display: flex; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--panel); overflow: hidden; margin-bottom: 14px; }
+  .metric { flex: 1; padding: 11px 16px; border-right: 1px solid var(--line2); min-width: 0; }
+  .metric:last-child { border-right: 0; }
+  .metric .k { color: var(--muted); font-size: 9.5px; text-transform: uppercase; letter-spacing: .9px; }
+  .metric .v { font-size: 20px; font-weight: 600; margin-top: 5px; letter-spacing: -.3px; white-space: nowrap; }
+  .metric .v small { font-size: 11px; color: var(--dim); font-weight: 400; letter-spacing: 0; }
+  .metric.rate .v { color: var(--accent); }
+  .metric .v.warn { color: var(--warn); }
+  .metric .sub { color: var(--muted); font-size: 10px; margin-top: 3px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
 
-  .grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 12px; padding: 0 18px; align-items: start; }
-  @media (max-width: 940px) { .grid { grid-template-columns: 1fr; } }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-  .panel > .head { display: flex; align-items: center; gap: 8px; padding: 10px 14px;
-    border-bottom: 1px solid var(--line); background: var(--panel2); }
-  .panel > .head .title { font-weight: 600; }
-  .panel > .head .note { margin-left: auto; color: var(--muted); font-size: 10.5px; }
+  /* ---- Layout ---- */
+  .grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+    gap: 12px; align-items: stretch; min-height: calc(100vh - 185px); }
+  @media (max-width: 960px) { .grid { grid-template-columns: 1fr; } }
+  .col { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    display: flex; flex-direction: column; min-height: 0; }
+  .panel > .ph { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px;
+    border-bottom: 1px solid var(--line); flex: none; }
+  .panel > .ph .t { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+  .panel > .ph .n { margin-left: auto; color: var(--muted); font-size: 10.5px; }
+  .panel > .ph .n .accent { color: var(--dim); }
 
-  /* Quotes grid */
-  .assetblock { border-bottom: 1px solid var(--line); }
-  .assetblock:last-child { border-bottom: 0; }
-  .assethead { display: flex; align-items: baseline; gap: 10px; padding: 8px 14px 4px; }
-  .assethead .base { font-size: 14px; font-weight: 700; letter-spacing: .5px; }
-  .assethead .cons { color: var(--muted); font-size: 11px; }
-  .assethead .cons b { font-weight: 600; }
-  .assethead .cons .b { color: var(--buy); } .assethead .cons .a { color: var(--sell); }
+  /* ---- Quotes ---- */
+  .qbody { padding: 2px 0 4px; }
+  .qgroup { padding: 7px 14px 3px; display: flex; align-items: baseline; gap: 12px;
+    border-top: 1px solid var(--line2); }
+  .qgroup:first-child { border-top: 0; }
+  .qgroup .pair { font-size: 12.5px; font-weight: 700; letter-spacing: .3px; }
+  .qgroup .pair .q { color: var(--muted); font-weight: 500; }
+  .qgroup .meta { margin-left: auto; color: var(--dim); font-size: 11px; }
+  .qgroup .meta b { color: var(--text); font-weight: 600; }
   table.q { width: 100%; border-collapse: collapse; }
-  table.q th { color: var(--muted); font-weight: 500; font-size: 10px; text-transform: uppercase;
-    letter-spacing: .5px; text-align: right; padding: 2px 14px 4px; }
-  table.q th.l { text-align: left; }
-  table.q td { padding: 2.5px 14px; text-align: right; white-space: nowrap; }
-  table.q td.l { text-align: left; }
-  table.q tr.qrow:hover { background: #161c28; }
-  table.q .v { color: var(--accent); text-align: left; }
-  table.q .sym { color: var(--muted); text-align: left; font-size: 12px; }
+  table.q th { color: var(--muted); font-weight: 500; font-size: 9.5px; text-transform: uppercase;
+    letter-spacing: .6px; text-align: right; padding: 3px 14px 3px 0; }
+  table.q th:first-child { padding-left: 14px; text-align: left; }
+  table.q th.sym { text-align: left; }
+  table.q td { padding: 3px 14px 3px 0; text-align: right; white-space: nowrap; }
+  table.q td:first-child { padding-left: 14px; text-align: left; }
+  table.q td.sym { text-align: left; color: var(--muted); }
+  table.q tr:hover td { background: var(--line2); }
+  table.q .v { color: var(--accent); }
+  table.q .num { color: var(--text); }
+  table.q .sz { color: var(--dim); font-size: 11.5px; }
   table.q .bid { color: var(--buy); } table.q .ask { color: var(--sell); }
-  table.q .sz { color: var(--muted); font-size: 12px; }
-  table.q td.best { background: var(--best); font-weight: 600; border-radius: 4px; }
-  table.q .mid, table.q .last { color: var(--text); }
-  table.q .stale { color: var(--snap); }
-  .flash { animation: flash .5s ease; }
-  @keyframes flash { from { background: rgba(77,163,255,.35); } to { background: transparent; } }
+  table.q td.bbid { background: var(--best-bid); box-shadow: inset 2px 0 0 var(--buy); }
+  table.q td.bask { background: var(--best-ask); box-shadow: inset -2px 0 0 var(--sell); }
+  table.q .stale { color: var(--warn); }
+  td.chg { animation: chg .45s ease; }
+  @keyframes chg { from { background: rgba(99,164,255,.28); } to { } }
+  @media (prefers-reduced-motion: reduce) { td.chg { animation: none; } .rows { scroll-behavior: auto; } }
 
-  /* Depth ladder */
-  .ladder { padding: 6px 0 8px; }
-  .selrow { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
-  .selrow button { font: inherit; font-size: 11px; color: var(--muted); background: transparent;
-    border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; cursor: pointer; }
-  .selrow button:hover { color: var(--text); border-color: var(--muted); }
-  .selrow button.on { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
-  .lrow { position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: 0;
-    padding: 1.5px 14px; z-index: 0; }
-  .lrow .bar { position: absolute; top: 1px; bottom: 1px; z-index: -1; border-radius: 2px; }
-  .lrow.ask .bar { right: 0; background: var(--sell-bg); }
-  .lrow.bid .bar { right: 0; background: var(--buy-bg); }
-  .lrow .px { text-align: left; } .lrow.ask .px { color: var(--sell); } .lrow.bid .px { color: var(--buy); }
+  /* ---- Order book ladder ---- */
+  .obright { height: 100%; }
+  .sel { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 12px; border-bottom: 1px solid var(--line); flex: none; }
+  .sel button { font: inherit; font-size: 10.5px; color: var(--dim); background: transparent;
+    border: 1px solid var(--line); border-radius: 5px; padding: 3px 8px; cursor: pointer; letter-spacing: .2px; }
+  .sel button:hover { color: var(--text); border-color: var(--muted); }
+  .sel button.on { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+  .ladder { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 0; }
+  .lhead { display: grid; grid-template-columns: 1fr 1fr; padding: 2px 14px 5px; color: var(--muted);
+    font-size: 9.5px; text-transform: uppercase; letter-spacing: .6px; }
+  .lhead span:last-child { text-align: right; }
+  .lrow { position: relative; display: grid; grid-template-columns: 1fr 1fr; padding: 1.5px 14px; z-index: 0; }
+  .lrow .bar { position: absolute; top: 1px; bottom: 1px; right: 0; z-index: -1; border-radius: 1px; }
+  .lrow.ask .bar { background: var(--sell-bg); } .lrow.bid .bar { background: var(--buy-bg); }
+  .lrow .px { text-align: left; font-weight: 500; }
+  .lrow.ask .px { color: var(--sell); } .lrow.bid .px { color: var(--buy); }
   .lrow .sz { text-align: right; color: var(--text); }
-  .spreadbar { display: flex; justify-content: space-between; padding: 5px 14px; margin: 3px 0;
-    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--panel2);
-    color: var(--muted); font-size: 11px; }
-  .spreadbar b { color: var(--text); font-weight: 600; }
+  .spreadrow { display: flex; justify-content: space-between; padding: 6px 14px; margin: 4px 0;
+    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    background: var(--panel2); color: var(--muted); font-size: 11px; }
+  .spreadrow b { color: var(--text); font-weight: 600; }
 
-  /* Tape */
-  .tape { padding: 0 18px; margin-top: 12px; }
-  .tapehead { display:flex; align-items:center; gap:8px; padding: 10px 4px 8px; }
-  .tapehead .title { font-weight: 600; } .tapehead .note { margin-left:auto; color: var(--muted); font-size: 10.5px; }
-  .rows { max-height: 240px; overflow-y: auto; background: var(--panel); border: 1px solid var(--line);
-    border-radius: 10px; padding: 4px 0; scroll-behavior: smooth; }
-  .trow { display: grid; grid-template-columns: 66px 74px 88px 46px 1fr auto; gap: 10px;
+  /* ---- Time & Sales ---- */
+  .tape { flex: 1; min-height: 150px; }
+  .rows { flex: 1; min-height: 0; overflow-y: auto; padding: 3px 0; scroll-behavior: smooth; }
+  .trow { display: grid; grid-template-columns: 62px 70px 84px 40px 1fr 96px; gap: 10px;
     padding: 1.5px 14px; white-space: nowrap; }
-  .trow .t { color: var(--muted); } .trow .v { color: var(--accent); }
+  .trow .t { color: var(--muted); } .trow .v { color: var(--accent); } .trow .sym { color: var(--dim); }
   .trow .side.buy { color: var(--buy); } .trow .side.sell { color: var(--sell); }
-  .trow .sz { text-align: right; } .trow .px { text-align: right; font-weight: 500; }
+  .trow .sz { text-align: right; color: var(--dim); } .trow .px { text-align: right; font-weight: 500; }
   .trow.buy .px { color: var(--buy); } .trow.sell .px { color: var(--sell); }
-  .trow.big { background: rgba(240,180,41,.10); }
-  .trow.big .sz { color: var(--snap); font-weight: 600; }
+  .trow.big { background: rgba(224,165,59,.09); }
+  .trow.big .sz { color: var(--warn); font-weight: 600; }
   .empty { color: var(--muted); padding: 16px 14px; }
 </style>
 </head>
@@ -117,228 +130,184 @@
 <div class="wrap">
   <header>
     <span class="dot" id="dot"></span>
-    <h1><span class="tick">tick</span>store <span class="sub">· live</span></h1>
+    <span class="brand"><span class="k">tick</span>store<span class="s">/live</span></span>
     <span class="clock" id="clock">—</span>
   </header>
 
-  <section class="cards">
-    <div class="card"><div class="label">Total rows</div><div class="value" id="totalRows">—</div><div class="sub">trades + book</div></div>
-    <div class="card"><div class="label">Storage</div><div class="value" id="bytes">—</div><div class="sub">compressed · 30-day TTL</div></div>
-    <div class="card hot"><div class="label">Insert rate</div><div class="value" id="rate">—<small> rows/s</small></div><div class="sub">live, all venues</div></div>
-    <div class="card"><div class="label">Book gaps / resyncs</div><div class="value" id="gaps">—</div><div class="sub">integrity events</div></div>
-    <div class="card"><div class="label">Trades</div><div class="value" id="trRows">—</div><div class="sub" id="trBytes"></div></div>
-    <div class="card"><div class="label">Book updates</div><div class="value" id="bkRows">—</div><div class="sub" id="bkBytes"></div></div>
-  </section>
+  <div class="metrics">
+    <div class="metric"><div class="k">Total rows</div><div class="v" id="totalRows">—</div><div class="sub">trades + book</div></div>
+    <div class="metric"><div class="k">Storage</div><div class="v" id="bytes">—</div><div class="sub">compressed · 30-day TTL</div></div>
+    <div class="metric rate"><div class="k">Insert rate</div><div class="v" id="rate">—<small> /s</small></div><div class="sub">all venues, live</div></div>
+    <div class="metric"><div class="k">Gaps / resyncs</div><div class="v" id="gaps">—</div><div class="sub">book integrity</div></div>
+    <div class="metric"><div class="k">Trades</div><div class="v" id="trRows">—</div><div class="sub" id="trBytes"></div></div>
+    <div class="metric"><div class="k">Book updates</div><div class="v" id="bkRows">—</div><div class="sub" id="bkBytes"></div></div>
+  </div>
 
-  <section class="grid">
-    <div class="panel">
-      <div class="head"><span class="title">Quotes</span><span class="note">best bid / ask per venue · best across venues highlighted</span></div>
-      <div id="quotes"><div class="empty">waiting for books…</div></div>
+  <div class="grid">
+    <div class="col">
+      <div class="panel">
+        <div class="ph"><span class="t">Quotes</span><span class="n">best bid / ask per venue · <span class="accent">best highlighted</span></span></div>
+        <div class="qbody" id="quotes"><div class="empty">waiting for books…</div></div>
+      </div>
+      <div class="panel tape">
+        <div class="ph"><span class="t">Time &amp; Sales</span><span class="n">large prints highlighted</span></div>
+        <div class="rows" id="tapeFeed"><div class="empty">waiting for trades…</div></div>
+      </div>
     </div>
-    <div class="panel">
-      <div class="head"><span class="title">Order book</span><span class="note" id="depthNote">depth ladder</span></div>
-      <div class="selrow" id="selrow"></div>
-      <div class="ladder" id="ladder"><div class="empty">select a market…</div></div>
-    </div>
-  </section>
 
-  <section class="tape">
-    <div class="tapehead"><span class="title">Time &amp; Sales</span><span class="note">large prints highlighted</span></div>
-    <div class="rows" id="tapeFeed"><div class="empty">waiting for trades…</div></div>
-  </section>
+    <div class="col">
+      <div class="panel obright">
+        <div class="ph"><span class="t">Order book</span><span class="n" id="obNote">—</span></div>
+        <div class="sel" id="sel"></div>
+        <div class="ladder" id="ladder"><div class="empty">select a market…</div></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
 let tapeCursor = 0, prevTotal = null, prevAt = null, selected = null;
-const prevQuote = {}; // venue|symbol -> {bid, ask} for flash detection
-const BIG_NOTIONAL = 15000; // USD; trades above this get highlighted on the tape
+const prevQ = {};                 // venue|symbol -> {bid,ask} for change flashes
+const BIG_NOTIONAL = 15000;       // USD notional above which a print is "large"
 
-function fmtInt(n){ return Math.round(n).toLocaleString("en-US"); }
-function fmtBytes(n){ if(!n) return "0 B"; const u=["B","KB","MB","GB","TB"]; let i=0,v=n; while(v>=1024&&i<u.length-1){v/=1024;i++;} return v.toFixed(v<10&&i>0?1:0)+" "+u[i]; }
-function px(n){ if(!n) return "—"; return n>=1000 ? n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}) : n.toFixed(n>=1?2:4); }
-function sz(n){ if(!n) return "0"; return parseFloat(n.toFixed(4)).toString(); }
-function pad(n){ return String(n).padStart(2,"0"); }
-function now(){ const d=new Date(); return pad(d.getHours())+":"+pad(d.getMinutes())+":"+pad(d.getSeconds()); }
-function setLive(ok){ const d=$("dot"); d.style.background = ok ? "var(--buy)" : "var(--sell)"; }
+const nf2 = new Intl.NumberFormat("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const fmtInt = n => Math.round(n).toLocaleString("en-US");
+function fmtBytes(n){ if(!n) return "0 B"; const u=["B","KB","MB","GB","TB"]; let i=0,v=n; while(v>=1024&&i<u.length-1){v/=1024;i++;} return (v<10&&i>0?v.toFixed(1):Math.round(v))+" "+u[i]; }
+function px(n){ if(!n) return "—"; return n>=1000 ? nf2.format(n) : n.toFixed(n>=1?2:4); }
+function sz(n){ if(n===0) return "0"; return parseFloat(Number(n).toFixed(4)).toString(); }
+function trim(s){ return String(s).replace(/(\.\d*?)0+$/,"$1").replace(/\.$/,""); }
+const pad = n => String(n).padStart(2,"0");
+const clock = () => { const d=new Date(); return pad(d.getHours())+":"+pad(d.getMinutes())+":"+pad(d.getSeconds()); };
+function setLive(ok){ $("dot").classList.toggle("down", !ok); }
 
-// ---- Quotes grid ----
+// ---------- Quotes ----------
 async function pollBook(){
   try {
-    const res = await fetch("/api/book"); if(!res.ok) throw 0;
-    const quotes = (await res.json()).quotes || [];
-    renderQuotes(quotes);
-    renderSelector(quotes);
+    const quotes = ((await (await fetch("/api/book")).json()).quotes) || [];
+    renderQuotes(quotes); renderSel(quotes);
+    let g=0,r=0; for(const q of quotes){ g+=q.gaps; r+=q.resyncs; }
+    const el=$("gaps"); el.textContent=fmtInt(g)+" / "+fmtInt(r); el.classList.toggle("warn", g>0);
     setLive(true);
   } catch(e){ setLive(false); }
 }
 
 function renderQuotes(quotes){
-  const host = $("quotes");
-  if(!quotes.length){ return; }
-  // group by base asset
-  const byBase = {};
-  for(const q of quotes){ (byBase[q.base] ||= []).push(q); }
-
+  if(!quotes.length) return;
+  const groups = {};
+  for(const q of quotes){ const k=q.base+"·"+q.quote; (groups[k] ||= {base:q.base, quote:q.quote, rows:[]}).rows.push(q); }
   let html = "";
-  for(const base of Object.keys(byBase).sort()){
-    const rows = byBase[base];
-    const bestBid = Math.max(...rows.map(r=>r.bid||0));
-    const asksP = rows.map(r=>r.ask).filter(a=>a>0);
-    const bestAsk = asksP.length ? Math.min(...asksP) : 0;
-    const consSpread = (bestBid && bestAsk) ? (bestAsk-bestBid) : 0;
-    html += `<div class="assetblock"><div class="assethead">`+
-      `<span class="base">${base}</span>`+
-      `<span class="cons">best <b class="b">${px(bestBid)}</b> / <b class="a">${px(bestAsk)}</b>`+
-      `&nbsp; spread <b>${consSpread?px(consSpread):"—"}</b></span></div>`+
-      `<table class="q"><thead><tr>`+
-      `<th class="l">Venue</th><th class="l">Symbol</th><th>Bid sz</th><th>Bid</th>`+
-      `<th>Ask</th><th>Ask sz</th><th>Spread</th><th>Last</th></tr></thead><tbody>`;
-    for(const q of rows){
-      const key = q.venue+"|"+q.symbol;
-      const pv = prevQuote[key] || {};
-      const bidFlash = pv.bid!==undefined && pv.bid!==q.bid ? " flash" : "";
-      const askFlash = pv.ask!==undefined && pv.ask!==q.ask ? " flash" : "";
-      prevQuote[key] = {bid:q.bid, ask:q.ask};
-      const bidBest = q.bid && q.bid===bestBid ? " best" : "";
-      const askBest = q.ask && q.ask===bestAsk ? " best" : "";
-      const stale = (!q.synced || q.age_ms>4000) ? ' <span class="stale">•</span>' : "";
-      html += `<tr class="qrow">`+
-        `<td class="v">${q.venue}${stale}</td><td class="sym">${q.symbol}</td>`+
-        `<td class="sz">${sz(q.bid_size)}</td>`+
-        `<td class="bid${bidBest}${bidFlash}">${px(q.bid)}</td>`+
-        `<td class="ask${askBest}${askFlash}">${px(q.ask)}</td>`+
-        `<td class="sz">${sz(q.ask_size)}</td>`+
-        `<td class="mid">${q.spread?px(q.spread):"—"}</td>`+
-        `<td class="last">${px(q.last)}</td></tr>`;
+  for(const k of Object.keys(groups).sort()){
+    const g = groups[k];
+    const bestBid = Math.max(0, ...g.rows.map(r=>r.bid||0));
+    const asks = g.rows.map(r=>r.ask).filter(a=>a>0);
+    const bestAsk = asks.length ? Math.min(...asks) : 0;
+    const spread = (bestBid && bestAsk) ? bestAsk-bestBid : 0;
+    const mid = (bestBid && bestAsk) ? (bestBid+bestAsk)/2 : 0;
+    html += `<div class="qgroup"><span class="pair">${g.base} <span class="q">· ${g.quote}</span></span>`+
+      `<span class="meta">mid <b>${px(mid)}</b> &nbsp; spread <b>${spread?px(spread):"—"}</b></span></div>`+
+      `<table class="q"><thead><tr><th>Venue</th><th class="sym">Symbol</th>`+
+      `<th>Bid sz</th><th>Bid</th><th>Ask</th><th>Ask sz</th><th>Spread</th><th>Last</th></tr></thead><tbody>`;
+    for(const q of g.rows){
+      const key=q.venue+"|"+q.symbol, pv=prevQ[key]||{};
+      const bf = pv.bid!==undefined && pv.bid!==q.bid ? " chg":"";
+      const af = pv.ask!==undefined && pv.ask!==q.ask ? " chg":"";
+      prevQ[key]={bid:q.bid, ask:q.ask};
+      const bb = g.rows.length>1 && q.bid && q.bid===bestBid ? " bbid":"";
+      const ba = g.rows.length>1 && q.ask && q.ask===bestAsk ? " bask":"";
+      const stale = (!q.synced || q.age_ms>4000) ? ' <span class="stale">●</span>':"";
+      html += `<tr><td class="v">${q.venue}${stale}</td><td class="sym">${q.symbol}</td>`+
+        `<td class="sz">${sz(q.bid_size)}</td><td class="bid${bb}${bf}">${px(q.bid)}</td>`+
+        `<td class="ask${ba}${af}">${px(q.ask)}</td><td class="sz">${sz(q.ask_size)}</td>`+
+        `<td class="num">${q.spread?px(q.spread):"—"}</td><td class="num">${px(q.last)}</td></tr>`;
     }
-    html += `</tbody></table></div>`;
+    html += `</tbody></table>`;
   }
-  host.innerHTML = html;
+  $("quotes").innerHTML = html;
 }
 
-// ---- Market selector + depth ladder ----
-function renderSelector(quotes){
-  const host = $("selrow");
-  const markets = quotes.map(q=>({venue:q.venue, symbol:q.symbol, base:q.base}));
-  if(!selected && markets.length) selected = markets[0];
-  // rebuild only if the set changed
-  const sig = markets.map(m=>m.venue+m.symbol).join(",");
-  if(host.dataset.sig === sig) { markSelected(); return; }
-  host.dataset.sig = sig;
-  host.innerHTML = markets.map(m=>
-    `<button data-v="${m.venue}" data-s="${m.symbol}">${m.venue} ${m.symbol}</button>`).join("");
-  for(const b of host.children){
-    b.onclick = () => { selected = {venue:b.dataset.v, symbol:b.dataset.s}; markSelected(); pollDepth(); };
+// ---------- Market selector + ladder ----------
+function renderSel(quotes){
+  const host=$("sel");
+  const sig = quotes.map(q=>q.venue+q.symbol).join(",");
+  if(!selected && quotes.length) selected={venue:quotes[0].venue, symbol:quotes[0].symbol};
+  if(host.dataset.sig!==sig){
+    host.dataset.sig=sig;
+    host.innerHTML = quotes.map(q=>`<button data-v="${q.venue}" data-s="${q.symbol}">${q.venue} ${q.symbol}</button>`).join("");
+    for(const b of host.children) b.onclick=()=>{ selected={venue:b.dataset.v, symbol:b.dataset.s}; markSel(); pollDepth(); };
   }
-  markSelected();
+  markSel();
 }
-function markSelected(){
-  for(const b of $("selrow").children){
-    b.classList.toggle("on", selected && b.dataset.v===selected.venue && b.dataset.s===selected.symbol);
-  }
-}
+function markSel(){ for(const b of $("sel").children) b.classList.toggle("on", selected && b.dataset.v===selected.venue && b.dataset.s===selected.symbol); }
 
 async function pollDepth(){
   if(!selected) return;
-  try {
-    const res = await fetch(`/api/depth?venue=${encodeURIComponent(selected.venue)}&symbol=${encodeURIComponent(selected.symbol)}`);
-    if(!res.ok) throw 0;
-    renderLadder(await res.json());
-  } catch(e){}
+  try { renderLadder(await (await fetch(`/api/depth?venue=${encodeURIComponent(selected.venue)}&symbol=${encodeURIComponent(selected.symbol)}`)).json()); } catch(e){}
 }
-
 function renderLadder(d){
-  const host = $("ladder");
-  $("depthNote").textContent = `${d.venue} ${d.symbol}`;
-  if(!d.found || (!d.bids.length && !d.asks.length)){ host.innerHTML = '<div class="empty">no book yet…</div>'; return; }
-  const maxCum = Math.max(
-    d.bids.length ? d.bids[d.bids.length-1].cum : 0,
-    d.asks.length ? d.asks[d.asks.length-1].cum : 0, 1e-9);
-  const bestBid = d.bids.length ? d.bids[0].price : 0;
-  const bestAsk = d.asks.length ? d.asks[0].price : 0;
-  const spread = (bestBid && bestAsk) ? bestAsk-bestBid : 0;
-  const mid = (bestBid && bestAsk) ? (bestBid+bestAsk)/2 : 0;
-
-  let html = "";
-  // asks: worst (highest) at top, best (lowest) just above the spread line
-  for(let i=d.asks.length-1; i>=0; i--){ html += lrow(d.asks[i], "ask", maxCum); }
-  html += `<div class="spreadbar"><span>spread <b>${spread?px(spread):"—"}</b></span>`+
-          `<span>mid <b>${mid?px(mid):"—"}</b></span></div>`;
-  // bids: best (highest) just below the spread line, worse below
-  for(let i=0; i<d.bids.length; i++){ html += lrow(d.bids[i], "bid", maxCum); }
-  host.innerHTML = html;
-}
-function lrow(l, side, maxCum){
-  const w = Math.max(2, (l.cum/maxCum)*100);
-  return `<div class="lrow ${side}"><span class="bar" style="width:${w}%"></span>`+
-    `<span class="px">${px(l.price)}</span><span class="sz">${sz(l.size)}</span></div>`;
+  $("obNote").textContent = `${d.venue} ${d.symbol}`;
+  const host=$("ladder");
+  if(!d.found || (!d.bids.length && !d.asks.length)){ host.innerHTML='<div class="empty">no book yet…</div>'; return; }
+  const maxCum = Math.max(d.bids.at(-1)?.cum||0, d.asks.at(-1)?.cum||0, 1e-9);
+  const bb=d.bids[0]?.price||0, ba=d.asks[0]?.price||0;
+  const spread=(bb&&ba)?ba-bb:0, mid=(bb&&ba)?(bb+ba)/2:0;
+  const row=(l,side)=>{ const w=Math.max(1.5,(l.cum/maxCum)*100);
+    return `<div class="lrow ${side}"><span class="bar" style="width:${w}%"></span><span class="px">${px(l.price)}</span><span class="sz">${sz(l.size)}</span></div>`; };
+  let h = `<div class="lhead"><span>Price</span><span>Size</span></div>`;
+  for(let i=d.asks.length-1;i>=0;i--) h+=row(d.asks[i],"ask");
+  h += `<div class="spreadrow"><span>spread <b>${spread?px(spread):"—"}</b></span><span>mid <b>${mid?px(mid):"—"}</b></span></div>`;
+  for(let i=0;i<d.bids.length;i++) h+=row(d.bids[i],"bid");
+  host.innerHTML=h;
 }
 
-// ---- Time & Sales tape ----
+// ---------- Time & Sales ----------
 async function pollTape(){
   try {
-    const res = await fetch(`/api/tape?ts=${tapeCursor}`); if(!res.ok) throw 0;
-    const trades = (await res.json()).trades || [];
-    if(trades.length){ tapeCursor = trades[trades.length-1].ts_nanos; appendTape(trades); }
+    const trades=((await (await fetch(`/api/tape?ts=${tapeCursor}`)).json()).trades)||[];
+    if(trades.length){ tapeCursor=trades.at(-1).ts_nanos; appendTape(trades); }
   } catch(e){}
 }
 function appendTape(trades){
-  const feed = $("tapeFeed");
-  const empty = feed.querySelector(".empty"); if(empty) empty.remove();
-  const nearBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 50;
-  const frag = document.createDocumentFragment();
+  const feed=$("tapeFeed"); const empty=feed.querySelector(".empty"); if(empty) empty.remove();
+  const near = feed.scrollHeight-feed.scrollTop-feed.clientHeight < 48;
+  const frag=document.createDocumentFragment();
   for(const r of trades){
-    const notional = parseFloat(r.price) * parseFloat(r.size);
-    const div = document.createElement("div");
-    div.className = "trow "+r.side + (notional>=BIG_NOTIONAL ? " big" : "");
-    div.innerHTML = `<span class="t">${r.time}</span><span class="v">${r.venue}</span>`+
-      `<span class="sym">${r.symbol}</span><span class="side ${r.side}">${r.side}</span>`+
-      `<span class="sz">${r.size.replace(/0+$/,"").replace(/\.$/,"")}</span>`+
-      `<span class="px">${r.price.replace(/0+$/,"").replace(/\.$/,"")}</span>`;
+    const notional=parseFloat(r.price)*parseFloat(r.size);
+    const div=document.createElement("div");
+    div.className="trow "+r.side+(notional>=BIG_NOTIONAL?" big":"");
+    div.innerHTML=`<span class="t">${r.time}</span><span class="v">${r.venue}</span><span class="sym">${r.symbol}</span>`+
+      `<span class="side ${r.side}">${r.side}</span><span class="sz">${trim(r.size)}</span><span class="px">${trim(r.price)}</span>`;
     frag.appendChild(div);
   }
   feed.appendChild(frag);
   while(feed.childElementCount>300) feed.removeChild(feed.firstChild);
-  if(nearBottom) feed.scrollTop = feed.scrollHeight;
+  if(near) feed.scrollTop=feed.scrollHeight;
 }
 
-// ---- Stat cards ----
+// ---------- Stats ----------
 async function pollStats(){
   try {
-    const res = await fetch("/api/stats"); if(!res.ok) throw 0;
-    const s = await res.json();
-    $("clock").textContent = s.server_time + " UTC";
-    $("totalRows").textContent = fmtInt(s.total_rows);
-    $("bytes").textContent = fmtBytes(s.total_bytes);
+    const s=await (await fetch("/api/stats")).json();
+    $("clock").textContent=s.server_time+" UTC";
+    $("totalRows").textContent=fmtInt(s.total_rows);
+    $("bytes").textContent=fmtBytes(s.total_bytes);
     for(const t of s.tables){
-      if(t.name==="trades"){ $("trRows").textContent = fmtInt(t.rows); $("trBytes").textContent = fmtBytes(t.bytes)+" on disk"; }
-      else if(t.name==="book_updates"){ $("bkRows").textContent = fmtInt(t.rows); $("bkBytes").textContent = fmtBytes(t.bytes)+" on disk"; }
+      if(t.name==="trades"){ $("trRows").textContent=fmtInt(t.rows); $("trBytes").textContent=fmtBytes(t.bytes)+" on disk"; }
+      else if(t.name==="book_updates"){ $("bkRows").textContent=fmtInt(t.rows); $("bkBytes").textContent=fmtBytes(t.bytes)+" on disk"; }
     }
-    const nowMs = Date.now();
-    if(prevTotal!==null){ const dt=(nowMs-prevAt)/1000; const rate = dt>0 ? Math.max(0,(s.total_rows-prevTotal)/dt):0;
-      $("rate").innerHTML = fmtInt(rate)+'<small> rows/s</small>'; }
-    prevTotal = s.total_rows; prevAt = nowMs;
-    setLive(true);
+    const nowMs=Date.now();
+    if(prevTotal!==null){ const dt=(nowMs-prevAt)/1000, rate=dt>0?Math.max(0,(s.total_rows-prevTotal)/dt):0;
+      $("rate").innerHTML=fmtInt(rate)+'<small> /s</small>'; }
+    prevTotal=s.total_rows; prevAt=nowMs; setLive(true);
   } catch(e){ setLive(false); }
 }
 
-// gaps/resyncs summed from the quote grid
-function updateGaps(){
-  fetch("/api/book").then(r=>r.json()).then(d=>{
-    let g=0,rs=0; for(const q of (d.quotes||[])){ g+=q.gaps; rs+=q.resyncs; }
-    const el = $("gaps"); el.textContent = fmtInt(g)+" / "+fmtInt(rs);
-    el.classList.toggle("warn", g>0);
-  }).catch(()=>{});
-}
-
-pollStats(); pollBook(); pollTape(); pollDepth(); updateGaps();
-setInterval(pollBook, 600);
-setInterval(pollDepth, 600);
+pollStats(); pollBook(); pollTape(); pollDepth();
+setInterval(pollBook, 700);
+setInterval(pollDepth, 700);
 setInterval(pollTape, 1000);
 setInterval(pollStats, 2000);
-setInterval(updateGaps, 4000);
 </script>
 </body>
 </html>
