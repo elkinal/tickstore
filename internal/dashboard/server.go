@@ -8,6 +8,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -16,6 +17,9 @@ import (
 	"github.com/elkinal/tickstore/internal/live"
 	"github.com/elkinal/tickstore/internal/sink"
 )
+
+// streamInterval is how often the SSE stream pushes a fresh snapshot.
+const streamInterval = 500 * time.Millisecond
 
 // feedLimit caps how many rows one feed poll returns, so a burst (or a fresh
 // page loading from an empty cursor) can't pull an unbounded result.
@@ -31,11 +35,14 @@ type Store interface {
 	RecentTrades(ctx context.Context, sinceNanos int64, limit int) ([]sink.FeedRow, error)
 }
 
-// Live is the in-memory read side: current books and last trades, for the BBO
-// grid and depth ladder. *live.Registry satisfies it.
+// Live is the in-memory read side: current books and recent trades, for the
+// quote grid, depth ladder, and tape. *live.Registry satisfies it.
 type Live interface {
 	Quotes() []live.Quote
 	Depth(venue, symbol string) (bids, asks []live.DepthRow, ok bool)
+	AllDepth() map[string]live.BookDepth
+	TradesSince(cursor int64, limit int) ([]live.TradeRow, int64)
+	LatestTradeID() int64
 }
 
 // Serve runs the dashboard HTTP server at addr until ctx is canceled. A blank
@@ -47,6 +54,7 @@ func Serve(ctx context.Context, addr string, store Store, reg Live, log *slog.Lo
 	h := &handler{store: store, reg: reg, log: log}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", h.index)
+	mux.HandleFunc("/api/stream", h.stream)
 	mux.HandleFunc("/api/stats", h.stats)
 	mux.HandleFunc("/api/tape", h.tape)
 	mux.HandleFunc("/api/book", h.book)
@@ -91,18 +99,85 @@ type statsResponse struct {
 	ServerTime string           `json:"server_time"`
 }
 
-func (h *handler) stats(w http.ResponseWriter, r *http.Request) {
-	tables, err := h.store.TableStats(r.Context())
+func (h *handler) buildStats(ctx context.Context) (statsResponse, error) {
+	tables, err := h.store.TableStats(ctx)
 	if err != nil {
-		h.fail(w, "stats", err)
-		return
+		return statsResponse{}, err
 	}
 	resp := statsResponse{Tables: tables, ServerTime: time.Now().UTC().Format("15:04:05")}
 	for _, t := range tables {
 		resp.TotalRows += t.Rows
 		resp.TotalBytes += t.Bytes
 	}
+	return resp, nil
+}
+
+func (h *handler) stats(w http.ResponseWriter, r *http.Request) {
+	resp, err := h.buildStats(r.Context())
+	if err != nil {
+		h.fail(w, "stats", err)
+		return
+	}
 	writeJSON(w, resp)
+}
+
+// stream is the live push channel: one Server-Sent Events connection over which
+// the server sends the current quotes and books, new tape trades, and (less
+// often) storage stats. It replaces per-endpoint polling — the browser holds
+// one connection instead of hammering four endpoints on timers.
+func (h *handler) stream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no") // don't let any proxy buffer the stream
+
+	ctx := r.Context()
+	ticker := time.NewTicker(streamInterval)
+	defer ticker.Stop()
+
+	// Seed the tape cursor near the end so a new client gets the last few trades,
+	// not the whole ring.
+	cursor := h.reg.LatestTradeID()
+	if cursor > 25 {
+		cursor -= 25
+	} else {
+		cursor = 0
+	}
+
+	for tick := 0; ; tick++ {
+		payload := map[string]any{
+			"quotes": h.reg.Quotes(),
+			"depth":  h.reg.AllDepth(),
+		}
+		var trades []live.TradeRow
+		trades, cursor = h.reg.TradesSince(cursor, 100)
+		if len(trades) > 0 {
+			payload["trades"] = trades
+		}
+		// Stats come from ClickHouse; refresh them every ~2s, not every tick.
+		if tick%4 == 0 {
+			if s, err := h.buildStats(ctx); err == nil {
+				payload["stats"] = s
+			}
+		}
+		b, err := json.Marshal(payload)
+		if err == nil {
+			if _, werr := fmt.Fprintf(w, "data: %s\n\n", b); werr != nil {
+				return // client went away
+			}
+			flusher.Flush()
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 // tape serves new trades (the time & sales tape) since the client's cursor.

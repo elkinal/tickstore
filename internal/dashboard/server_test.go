@@ -32,6 +32,16 @@ func (fakeLive) Depth(venue, symbol string) ([]live.DepthRow, []live.DepthRow, b
 	}
 	return []live.DepthRow{{Price: 64000, Size: 1, Cum: 1}}, []live.DepthRow{{Price: 64001, Size: 2, Cum: 2}}, true
 }
+func (fakeLive) AllDepth() map[string]live.BookDepth {
+	return map[string]live.BookDepth{"okx|BTC-USDT": {
+		Bids: []live.DepthRow{{Price: 64000, Size: 1, Cum: 1}},
+		Asks: []live.DepthRow{{Price: 64001, Size: 2, Cum: 2}},
+	}}
+}
+func (fakeLive) TradesSince(cursor int64, limit int) ([]live.TradeRow, int64) {
+	return []live.TradeRow{{Time: "12:00:00", Venue: "okx", Symbol: "BTC-USDT", Side: "buy", Size: "0.5", Price: "64000"}}, cursor + 1
+}
+func (fakeLive) LatestTradeID() int64 { return 0 }
 
 func newTestHandler() *handler { return &handler{store: fakeStore{}, reg: fakeLive{}} }
 

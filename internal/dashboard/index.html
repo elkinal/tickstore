@@ -176,7 +176,7 @@
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
-let tapeCursor = 0, prevTotal = null, prevAt = null, selected = null;
+let prevTotal = null, prevAt = null, selected = null, lastDepth = {};
 const prevQ = {};
 const BIG_NOTIONAL = 15000;
 // On mobile the tape is laid out in full (no inner scroll), so keep fewer rows
@@ -192,14 +192,10 @@ function trim(s){ return String(s).replace(/(\.\d*?)0+$/,"$1").replace(/\.$/,"")
 const pad = n => String(n).padStart(2,"0");
 function setLive(ok){ $("dot").classList.toggle("down", !ok); }
 
-async function pollBook(){
-  try {
-    const quotes = ((await (await fetch("/api/book")).json()).quotes) || [];
-    renderQuotes(quotes); renderSel(quotes);
-    let g=0,r=0; for(const q of quotes){ g+=q.gaps; r+=q.resyncs; }
-    const el=$("gaps"); el.textContent=fmtInt(g)+" / "+fmtInt(r); el.classList.toggle("warn", g>0);
-    setLive(true);
-  } catch(e){ setLive(false); }
+function onQuotes(quotes){
+  renderQuotes(quotes); renderSel(quotes);
+  let g=0,r=0; for(const q of quotes){ g+=q.gaps; r+=q.resyncs; }
+  const el=$("gaps"); el.textContent=fmtInt(g)+" / "+fmtInt(r); el.classList.toggle("warn", g>0);
 }
 
 // The quote table is built once (and only rebuilt when the set of markets
@@ -279,15 +275,18 @@ function renderSel(quotes){
   if(host.dataset.sig!==sig){
     host.dataset.sig=sig;
     host.innerHTML = quotes.map(q=>`<button data-v="${q.venue}" data-s="${q.symbol}">${q.venue} ${q.symbol}</button>`).join("");
-    for(const b of host.children) b.onclick=()=>{ selected={venue:b.dataset.v, symbol:b.dataset.s}; markSel(); pollDepth(); };
+    for(const b of host.children) b.onclick=()=>{ selected={venue:b.dataset.v, symbol:b.dataset.s}; markSel(); showLadder(); };
   }
   markSel();
 }
 function markSel(){ for(const b of $("sel").children) b.classList.toggle("on", selected && b.dataset.v===selected.venue && b.dataset.s===selected.symbol); }
 
-async function pollDepth(){
+// The stream carries every market's depth; showLadder renders the selected one
+// from the latest snapshot, so switching markets is instant.
+function showLadder(){
   if(!selected) return;
-  try { renderLadder(await (await fetch(`/api/depth?venue=${encodeURIComponent(selected.venue)}&symbol=${encodeURIComponent(selected.symbol)}`)).json()); } catch(e){}
+  const bk = lastDepth[selected.venue+"|"+selected.symbol];
+  renderLadder({venue:selected.venue, symbol:selected.symbol, bids:bk?bk.bids:[], asks:bk?bk.asks:[], found:!!bk});
 }
 function renderLadder(d){
   $("obNote").textContent = `${d.venue} ${d.symbol}`;
@@ -306,12 +305,6 @@ function renderLadder(d){
   host.innerHTML=h;
 }
 
-async function pollTape(){
-  try {
-    const trades=((await (await fetch(`/api/tape?ts=${tapeCursor}`)).json()).trades)||[];
-    if(trades.length){ tapeCursor=trades.at(-1).ts_nanos; appendTape(trades); }
-  } catch(e){}
-}
 function appendTape(trades){
   const feed=$("tapeFeed"); const empty=feed.querySelector(".empty"); if(empty) empty.remove();
   const near = feed.scrollHeight-feed.scrollTop-feed.clientHeight < 48;
@@ -329,24 +322,29 @@ function appendTape(trades){
   if(near) feed.scrollTop=feed.scrollHeight;
 }
 
-async function pollStats(){
-  try {
-    const s=await (await fetch("/api/stats")).json();
-    $("clock").textContent=s.server_time+" UTC";
-    $("totalRows").textContent=fmtInt(s.total_rows);
-    $("bytes").textContent=fmtBytes(s.total_bytes);
-    const nowMs=Date.now();
-    if(prevTotal!==null){ const dt=(nowMs-prevAt)/1000, rate=dt>0?Math.max(0,(s.total_rows-prevTotal)/dt):0;
-      $("rate").innerHTML=fmtInt(rate)+'<small> /s</small>'; }
-    prevTotal=s.total_rows; prevAt=nowMs; setLive(true);
-  } catch(e){ setLive(false); }
+function renderStats(s){
+  $("clock").textContent=s.server_time+" UTC";
+  $("totalRows").textContent=fmtInt(s.total_rows);
+  $("bytes").textContent=fmtBytes(s.total_bytes);
+  const nowMs=Date.now();
+  if(prevTotal!==null){ const dt=(nowMs-prevAt)/1000, rate=dt>0?Math.max(0,(s.total_rows-prevTotal)/dt):0;
+    $("rate").innerHTML=fmtInt(rate)+'<small> /s</small>'; }
+  prevTotal=s.total_rows; prevAt=nowMs;
 }
 
-pollStats(); pollBook(); pollTape(); pollDepth();
-setInterval(pollBook, 700);
-setInterval(pollDepth, 700);
-setInterval(pollTape, 1000);
-setInterval(pollStats, 2000);
+// One Server-Sent Events connection replaces all polling: the server pushes a
+// snapshot ~2×/second and the browser just renders it. EventSource reconnects
+// on its own if the connection drops.
+const es = new EventSource("/api/stream");
+es.onmessage = ev => {
+  let d; try { d = JSON.parse(ev.data); } catch(e){ return; }
+  if(d.quotes) onQuotes(d.quotes);
+  if(d.depth){ lastDepth = d.depth; showLadder(); }
+  if(d.trades && d.trades.length) appendTape(d.trades);
+  if(d.stats) renderStats(d.stats);
+  setLive(true);
+};
+es.onerror = () => setLive(false);
 </script>
 </body>
 </html>

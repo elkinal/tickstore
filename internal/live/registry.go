@@ -25,6 +25,21 @@ type Registry struct {
 	mu     sync.RWMutex
 	books  map[string]*bookState
 	trades map[string]tradeState
+	// recent is a ring of the latest trades for the live tape, each with a
+	// monotonic id so a streaming client can ask for "everything after N".
+	recent      []recentTrade
+	nextTradeID int64
+}
+
+// maxRecentTrades bounds the tape ring; older trades fall off.
+const maxRecentTrades = 500
+
+type recentTrade struct {
+	id            int64
+	venue, symbol string
+	side          norm.Side
+	price, size   int64
+	ts            time.Time
 }
 
 type bookState struct {
@@ -74,13 +89,81 @@ func (r *Registry) OnBook(b *book.Book) {
 	r.mu.Unlock()
 }
 
-// OnTrade records the last trade for a market.
+// OnTrade records the last trade for a market and appends it to the tape ring.
 func (r *Registry) OnTrade(t norm.Trade) {
 	r.mu.Lock()
 	r.trades[key(t.Venue, t.Symbol)] = tradeState{
 		price: t.Price, side: t.Side, size: t.Size, updated: t.TsReceived,
 	}
+	r.nextTradeID++
+	r.recent = append(r.recent, recentTrade{
+		id: r.nextTradeID, venue: t.Venue, symbol: t.Symbol,
+		side: t.Side, price: t.Price, size: t.Size, ts: t.TsReceived,
+	})
+	if len(r.recent) > maxRecentTrades {
+		r.recent = r.recent[len(r.recent)-maxRecentTrades:]
+	}
 	r.mu.Unlock()
+}
+
+// TradeRow is one tape entry, pre-formatted for display.
+type TradeRow struct {
+	Time   string `json:"time"`
+	Venue  string `json:"venue"`
+	Symbol string `json:"symbol"`
+	Side   string `json:"side"`
+	Size   string `json:"size"`
+	Price  string `json:"price"`
+}
+
+// LatestTradeID returns the id of the most recent trade, so a new client can
+// start its cursor near the end rather than replaying the whole ring.
+func (r *Registry) LatestTradeID() int64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.nextTradeID
+}
+
+// TradesSince returns up to limit trades with id greater than cursor (oldest
+// first) and the new cursor. Trades that already fell off the ring are skipped.
+func (r *Registry) TradesSince(cursor int64, limit int) ([]TradeRow, int64) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]TradeRow, 0, limit)
+	last := cursor
+	for _, t := range r.recent {
+		if t.id <= cursor {
+			continue
+		}
+		out = append(out, TradeRow{
+			Time: t.ts.Format("15:04:05"), Venue: t.venue, Symbol: t.symbol, Side: t.side.String(),
+			Size:  norm.FormatFixed(t.size, norm.SizeDecimals),
+			Price: norm.FormatFixed(t.price, norm.PriceDecimals),
+		})
+		last = t.id
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, last
+}
+
+// BookDepth is one market's ladder (bids and asks) for the streaming payload.
+type BookDepth struct {
+	Bids []DepthRow `json:"bids"`
+	Asks []DepthRow `json:"asks"`
+}
+
+// AllDepth returns the current ladder for every known market, keyed by
+// "venue|symbol", so the stream can push all books in one message.
+func (r *Registry) AllDepth() map[string]BookDepth {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make(map[string]BookDepth, len(r.books))
+	for k, b := range r.books {
+		out[k] = BookDepth{Bids: ladder(b.bids), Asks: ladder(b.asks)}
+	}
+	return out
 }
 
 // Quote is one market's current best bid/ask plus its last trade, formatted for
