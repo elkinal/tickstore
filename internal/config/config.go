@@ -62,14 +62,16 @@ func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-// Load reads and validates the config at path.
+// Load reads and validates the config at path. ${VAR} references in the file are
+// expanded from the environment first, so secrets (e.g. the ClickHouse password)
+// can be injected at deploy time instead of committed.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 	var c Config
-	if err := yaml.Unmarshal(data, &c); err != nil {
+	if err := yaml.Unmarshal([]byte(os.ExpandEnv(string(data))), &c); err != nil {
 		return nil, fmt.Errorf("config: parse %s: %w", path, err)
 	}
 	if err := c.validate(); err != nil {

@@ -1,23 +1,24 @@
 # The full stack: ClickHouse plus the tickstore app streaming three venues.
 #
-#   docker compose up -d --build   # run everything
-#   curl localhost:9090/metrics    # app metrics
+#   docker compose up -d --build     # run everything
 #   docker compose up -d clickhouse  # just the database (for local `go run`/tests)
 #
+# Credentials come from the environment (see .env.example), defaulting to dev
+# values. Ports bind to 127.0.0.1 only, so nothing is exposed publicly on a VPS;
+# reach them over an SSH tunnel or a reverse proxy you control.
 services:
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
+    restart: unless-stopped
     ports:
-      - "9000:9000" # native protocol (used by the app)
-      - "8123:8123" # http (handy for curl/clickhouse-client)
+      - "127.0.0.1:9000:9000" # native protocol
+      - "127.0.0.1:8123:8123" # http
     environment:
-      # Without explicit credentials the image locks the default user to
-      # localhost only, so give the app a real network user. Dev creds only.
-      CLICKHOUSE_USER: tickstore
-      CLICKHOUSE_PASSWORD: tickstore
-      CLICKHOUSE_DB: tickstore
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-tickstore}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-tickstore}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-tickstore}
     volumes:
-      # Run our schema on first startup; CREATE ... IF NOT EXISTS is idempotent.
+      - clickhouse-data:/var/lib/clickhouse # persist data across restarts
       - ./internal/sink/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
     ulimits:
       nofile:
@@ -31,11 +32,19 @@ services:
 
   tickstore:
     build: .
+    restart: unless-stopped
     depends_on:
       clickhouse:
         condition: service_healthy # wait for the DB before connecting
+    environment:
+      # Passed into the container so the config file's ${...} refs resolve.
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-tickstore}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-tickstore}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-tickstore}
     volumes:
       - ./config.docker.yaml:/etc/tickstore/config.yaml:ro
     ports:
-      - "9090:9090" # Prometheus /metrics
-    restart: unless-stopped
+      - "127.0.0.1:9090:9090" # Prometheus /metrics
+
+volumes:
+  clickhouse-data:

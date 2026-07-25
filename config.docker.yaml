@@ -3,9 +3,9 @@
 
 clickhouse:
   addr: clickhouse:9000
-  database: tickstore
-  username: tickstore
-  password: tickstore
+  database: ${CLICKHOUSE_DB}
+  username: ${CLICKHOUSE_USER}
+  password: ${CLICKHOUSE_PASSWORD} # injected from the environment (.env)
 
 sink:
   max_rows: 10000

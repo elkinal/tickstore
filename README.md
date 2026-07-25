@@ -104,6 +104,43 @@ venues:
   - { name: okx,      symbols: [BTC-USDT, ETH-USDT] }
 ```
 
+## Deploying to a VPS
+
+The full stack runs 24/7 on a small box (~$5/mo, or free on an Oracle Cloud
+always-free ARM VM). Data persists in a named volume and everything restarts on
+reboot. ~2 GB RAM is comfortable; trades store at roughly 1 GB/month.
+
+On a fresh Ubuntu server with Docker installed:
+
+```sh
+git clone https://github.com/elkinal/tickstore.git && cd tickstore
+cp .env.example .env
+# edit .env: set a real CLICKHOUSE_PASSWORD
+docker compose up -d --build
+```
+
+That's it — the app reconnects, retries, and restarts on its own. Useful checks:
+
+```sh
+docker compose ps              # both services up; clickhouse healthy
+docker compose logs -f tickstore
+```
+
+**Security.** Ports bind to `127.0.0.1` only, so nothing is exposed on the public
+internet. To reach `/metrics` or ClickHouse from your machine, tunnel over SSH:
+
+```sh
+ssh -L 9090:localhost:9090 -L 8123:localhost:8123 user@your-server
+# then locally: curl localhost:9090/metrics
+```
+
+**Persistence & storage.** ClickHouse data lives in the `clickhouse-data` volume
+and survives restarts. Trades are ~1 GB/month for the default six symbols. If you
+add `book_updates` persistence later, add a `TTL` to that table (books are much
+higher volume) so disk stays bounded.
+
+**Updating.** `git pull && docker compose up -d --build`.
+
 ## Measured numbers
 
 From a local run of the full stack (all three venues, BTC + ETH majors). These

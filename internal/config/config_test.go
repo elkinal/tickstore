@@ -49,6 +49,24 @@ venues:
 	}
 }
 
+func TestLoadExpandsEnv(t *testing.T) {
+	t.Setenv("TEST_CH_PASSWORD", "s3cret")
+	path := writeTemp(t, `
+clickhouse:
+  addr: clickhouse:9000
+  password: ${TEST_CH_PASSWORD}
+venues:
+  - { name: okx, symbols: [BTC-USDT] }
+`)
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.ClickHouse.Password != "s3cret" {
+		t.Fatalf("password = %q, want expanded to s3cret", c.ClickHouse.Password)
+	}
+}
+
 func TestLoadErrors(t *testing.T) {
 	tests := []struct {
 		name, body, wantSub string
