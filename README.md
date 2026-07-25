@@ -141,6 +141,24 @@ higher volume) so disk stays bounded.
 
 **Updating.** `git pull && docker compose up -d --build`.
 
+### Server management shortcuts
+
+A local helper script (`~/.tickstore.sh`, sourced from your shell rc; holds the
+host + ClickHouse password, so it's kept out of git) wraps the common operations
+as `ts-*` commands you run from your own machine over SSH:
+
+| Command | Does |
+|---|---|
+| `ts` | SSH into the server |
+| `ts-status` | container health |
+| `ts-vwap` / `ts-count` | live VWAP / trade counts per symbol |
+| `ts-q "SQL"` | run any ClickHouse query |
+| `ts-metrics` | Prometheus counters |
+| `ts-logs` | follow the live app log |
+| `ts-restart` / `ts-update` | restart the app / pull + rebuild + redeploy |
+| `ts-tunnel` | expose the server's ClickHouse + metrics on localhost |
+| `ts-help` | list them all |
+
 ## Measured numbers
 
 From a local run of the full stack (all three venues, BTC + ETH majors). These
