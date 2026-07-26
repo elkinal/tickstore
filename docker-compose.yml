@@ -44,8 +44,26 @@ services:
     volumes:
       - ./config.docker.yaml:/etc/tickstore/config.yaml:ro
     ports:
-      - "127.0.0.1:9090:9090" # Prometheus /metrics
-      - "127.0.0.1:8080:8080" # live dashboard (reach it over an SSH tunnel)
+      - "127.0.0.1:9090:9090" # Prometheus /metrics (localhost only)
+      - "127.0.0.1:8080:8080" # dashboard, also reachable via SSH tunnel
+
+  # Public HTTPS front door for the dashboard only. This is the sole service
+  # exposed to the internet; it proxies to tickstore:8080 over the internal
+  # network and auto-manages the TLS certificate.
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - tickstore
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data # persist issued certificates across restarts
+      - caddy-config:/config
 
 volumes:
   clickhouse-data:
+  caddy-data:
+  caddy-config:
