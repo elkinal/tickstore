@@ -6,6 +6,11 @@ streaming dashboard. Runs 24/7 on a VPS.
 
 **Live demo:** https://tickstore.alexeyelkin.com
 
+![tickstore dashboard](docs/dashboard.png)
+
+*The live dashboard: cross-venue quotes, an order-book depth ladder, and time &
+sales, streamed over Server-Sent Events.*
+
 tickstore connects to **Coinbase, Kraken, and OKX** over their public
 WebSockets, normalizes each venue's format into one schema, rebuilds L2 order
 books with per-venue integrity checks, and batches trades into ClickHouse. It
@@ -135,8 +140,6 @@ HTTPS and forwards only the dashboard:
 ```sh
 docker compose --profile public up -d
 ```
-
-<!-- Add a screenshot: ![tickstore dashboard](docs/dashboard.png) -->
 
 ## Deploying to a VPS
 
