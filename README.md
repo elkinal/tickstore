@@ -177,7 +177,7 @@ stay private.
 
 **Persistence and storage.** ClickHouse data lives in the `clickhouse-data`
 volume and survives restarts. Trades are about 1 GB/month for the default six
-symbols. The full L2 firehose can also be persisted to `book_updates` by setting
+symbols and are kept for 90 days (their own TTL). The full L2 firehose can also be persisted to `book_updates` by setting
 `persist_books: true`. It is off by default because books are far higher volume
 than trades (measured about 500 book updates/sec versus a few trades/sec across
 the six default symbols). ClickHouse compresses them to about 13 bytes/row, so

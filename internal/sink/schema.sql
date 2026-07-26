@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS tickstore.trades
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMMDD(ts_exchange)
-ORDER BY (venue, symbol, ts_exchange);
+ORDER BY (venue, symbol, ts_exchange)
+TTL toDateTime(ts_exchange) + INTERVAL 90 DAY;
 
 -- L2 order book updates: one row per changed price level. size 0 means the
 -- level was removed. is_snapshot = 1 marks levels that came from a full
