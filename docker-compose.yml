@@ -47,14 +47,18 @@ services:
       - "127.0.0.1:9090:9090" # Prometheus /metrics (localhost only)
       - "127.0.0.1:8080:8080" # dashboard, also reachable via SSH tunnel
 
-  # Public HTTPS front door for the dashboard only. This is the sole service
-  # exposed to the internet; it proxies to tickstore:8080 over the internal
-  # network and auto-manages the TLS certificate.
+  # Optional public HTTPS front door for the dashboard. Off by default (only the
+  # localhost bindings above run); enable it with `docker compose --profile
+  # public up -d` after setting DASHBOARD_DOMAIN in .env. It is the only service
+  # that faces the internet and proxies just the dashboard.
   caddy:
     image: caddy:2
+    profiles: ["public"]
     restart: unless-stopped
     depends_on:
       - tickstore
+    environment:
+      DASHBOARD_DOMAIN: ${DASHBOARD_DOMAIN}
     ports:
       - "80:80"
       - "443:443"

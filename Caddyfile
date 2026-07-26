@@ -1,8 +1,8 @@
-# Public HTTPS front door for the live dashboard. Caddy automatically obtains
-# and renews a Let's Encrypt certificate for the domain and reverse-proxies to
-# the dashboard running inside the tickstore container. Only this proxy is
-# exposed publicly (ports 80/443); ClickHouse, metrics, and the dashboard's
-# direct port stay bound to localhost.
-tickstore.alexeyelkin.com {
+# HTTPS front door for the dashboard, used only when hosting it publicly.
+# The domain comes from the DASHBOARD_DOMAIN environment variable (set in .env).
+# Caddy obtains and renews a Let's Encrypt certificate and proxies to the
+# dashboard inside the tickstore container. Only this proxy faces the internet;
+# ClickHouse, metrics, and the dashboard's direct port stay bound to localhost.
+{$DASHBOARD_DOMAIN} {
 	reverse_proxy tickstore:8080
 }

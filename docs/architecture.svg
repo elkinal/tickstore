@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 990 300" font-family="Helvetica, Arial, sans-serif" font-size="13">
+  <rect x="0" y="0" width="990" height="300" fill="#ffffff"/>
+  <defs>
+    <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#64748b"/>
+    </marker>
+    <style>
+      .box { fill:#f8fafc; stroke:#94a3b8; stroke-width:1.2; rx:7; }
+      .db  { fill:#eef2ff; stroke:#818cf8; stroke-width:1.2; rx:7; }
+      .ui  { fill:#ecfdf5; stroke:#34d399; stroke-width:1.2; rx:7; }
+      .t   { fill:#0f172a; text-anchor:middle; }
+      .s   { fill:#475569; text-anchor:middle; font-size:11px; }
+      .lbl { fill:#64748b; text-anchor:middle; font-size:11px; }
+      .ln  { stroke:#64748b; stroke-width:1.5; fill:none; }
+    </style>
+  </defs>
+
+  <!-- exchanges -->
+  <rect class="box" x="20" y="44" width="118" height="32" rx="7"/>
+  <text class="t" x="79" y="64">Coinbase WS</text>
+  <rect class="box" x="20" y="120" width="118" height="32" rx="7"/>
+  <text class="t" x="79" y="140">Kraken WS</text>
+  <rect class="box" x="20" y="196" width="118" height="32" rx="7"/>
+  <text class="t" x="79" y="216">OKX WS</text>
+
+  <!-- parse -->
+  <rect class="box" x="182" y="104" width="150" height="64" rx="7"/>
+  <text class="t" x="257" y="132">parse + normalize</text>
+  <text class="s" x="257" y="150">fixed-point int64</text>
+
+  <!-- book engine -->
+  <rect class="box" x="378" y="104" width="184" height="64" rx="7"/>
+  <text class="t" x="470" y="130">order book engine</text>
+  <text class="s" x="470" y="148">gap detect, resync, checksum</text>
+
+  <!-- batcher -->
+  <rect class="box" x="612" y="44" width="158" height="58" rx="7"/>
+  <text class="t" x="691" y="70">batcher</text>
+  <text class="s" x="691" y="87">backpressure, retry</text>
+
+  <!-- clickhouse -->
+  <rect class="db" x="814" y="44" width="156" height="58" rx="7"/>
+  <text class="t" x="892" y="70">ClickHouse</text>
+  <text class="s" x="892" y="87">MergeTree, 30-day TTL</text>
+
+  <!-- live state -->
+  <rect class="box" x="612" y="196" width="158" height="58" rx="7"/>
+  <text class="t" x="691" y="222">live state</text>
+  <text class="s" x="691" y="239">in-memory</text>
+
+  <!-- dashboard -->
+  <rect class="ui" x="814" y="196" width="156" height="58" rx="7"/>
+  <text class="t" x="892" y="222">live dashboard</text>
+  <text class="s" x="892" y="239">Server-Sent Events</text>
+
+  <!-- arrows: exchanges -> parse -->
+  <path class="ln" d="M138,60 C160,60 162,128 182,132" marker-end="url(#a)"/>
+  <path class="ln" d="M138,136 L182,136" marker-end="url(#a)"/>
+  <path class="ln" d="M138,212 C160,212 162,144 182,140" marker-end="url(#a)"/>
+
+  <!-- parse -> book engine -->
+  <path class="ln" d="M332,136 L378,136" marker-end="url(#a)"/>
+
+  <!-- book engine -> batcher (persist) -->
+  <path class="ln" d="M520,104 C560,104 585,80 612,76" marker-end="url(#a)"/>
+  <text class="lbl" x="576" y="94">persist</text>
+
+  <!-- book engine -> live state -->
+  <path class="ln" d="M520,168 C560,168 585,214 612,222" marker-end="url(#a)"/>
+  <text class="lbl" x="576" y="205">current book</text>
+
+  <!-- batcher -> clickhouse -->
+  <path class="ln" d="M770,73 L814,73" marker-end="url(#a)"/>
+
+  <!-- live state -> dashboard -->
+  <path class="ln" d="M770,225 L814,225" marker-end="url(#a)"/>
+</svg>
