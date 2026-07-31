@@ -12,6 +12,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/elkinal/tickstore/internal/book"
+	"github.com/elkinal/tickstore/internal/metrics"
 	"github.com/elkinal/tickstore/internal/norm"
 	"github.com/elkinal/tickstore/internal/venue"
 )
@@ -123,11 +124,13 @@ func (c *BookConnector) session(ctx context.Context) (gotData bool, err error) {
 		if err != nil {
 			return gotData, fmt.Errorf("read: %w", err)
 		}
+		metrics.Messages.WithLabelValues(Name).Inc()
 		snap, ups, err := parseLevel2(raw, time.Now())
 		if err != nil {
 			if errors.Is(err, errVenueError) {
 				return gotData, err
 			}
+			metrics.ParseErrors.WithLabelValues(Name).Inc()
 			c.log.Error("level2 parse error", "error", err)
 			continue
 		}

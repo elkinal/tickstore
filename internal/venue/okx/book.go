@@ -104,11 +104,13 @@ func (c *BookConnector) session(ctx context.Context) (gotData bool, err error) {
 		if err != nil {
 			return gotData, fmt.Errorf("read: %w", err)
 		}
+		metrics.Messages.WithLabelValues(Name).Inc()
 		if string(raw) == "pong" {
 			continue
 		}
 		var e envelope
 		if err := json.Unmarshal(raw, &e); err != nil {
+			metrics.ParseErrors.WithLabelValues(Name).Inc()
 			c.log.Error("book bad json", "error", err)
 			continue
 		}
@@ -120,6 +122,7 @@ func (c *BookConnector) session(ctx context.Context) (gotData bool, err error) {
 		}
 		var rows []bookData
 		if err := json.Unmarshal(e.Data, &rows); err != nil {
+			metrics.ParseErrors.WithLabelValues(Name).Inc()
 			c.log.Error("book decode", "error", err)
 			continue
 		}

@@ -49,8 +49,8 @@ reconstructed book also feeds the live dashboard from in-memory state.
   full jitter, heartbeat-backed read timeouts, and isolated goroutines so one
   venue failing does not take down the others.
 - **Metrics.** Prometheus counters and histograms for messages and parse errors
-  (trade feeds), trades, book gaps, resyncs, sink batch size, flush latency, and
-  end-to-end latency.
+  (per venue, across both the trade and order-book feeds), trades, book gaps,
+  resyncs, sink batch size, flush latency, and end-to-end latency.
 - **Order-book firehose (opt-in).** The full L2 book can be persisted to a
   `book_updates` table, about 0.6 GB/day, bounded by a 30-day `TTL`. Off by
   default because it is tens of times the volume of trades (~500/sec vs ~14/sec
@@ -214,10 +214,11 @@ relative, not absolute. True numbers need an NTP-disciplined clock.
 `tickstore_book_resyncs_total`, `tickstore_sink_batch_rows`,
 `tickstore_sink_flush_seconds`, `tickstore_e2e_latency_seconds`.
 
-`messages_total` and `parse_errors_total` count the trade feeds; book-feed
-integrity is tracked by `book_gaps_total` / `book_resyncs_total` (Kraken and OKX,
-which expose a checksum / sequence). `e2e_latency_seconds` is `ts_received -
-ts_exchange` (receipt vs exchange timestamp), so it is sensitive to clock skew.
+`messages_total` and `parse_errors_total` cover every venue feed, both trades and
+order books. Book integrity is tracked by `book_gaps_total` / `book_resyncs_total`
+(Kraken and OKX, which expose a checksum / sequence; Coinbase's public feed has no
+live integrity check). `e2e_latency_seconds` is `ts_received - ts_exchange`
+(receipt vs exchange timestamp), so it is sensitive to clock skew.
 
 ## Layout
 
