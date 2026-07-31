@@ -37,7 +37,7 @@ reconstructed book also feeds the live dashboard from in-memory state.
   | Venue    | Live book integrity                          |
   |----------|----------------------------------------------|
   | Coinbase | public feed has none; resync on reconnect    |
-  | Kraken   | **CRC32 checksum** validated every frame     |
+  | Kraken   | **CRC32 checksum** per frame (after precision) |
   | OKX      | **seqId / prevSeqId** sequence-gap detection |
 
   The venue-agnostic engine's own gap detection is covered by property tests:
@@ -48,12 +48,13 @@ reconstructed book also feeds the live dashboard from in-memory state.
 - **Reconnect and isolation.** Per-venue reconnect with exponential backoff and
   full jitter, heartbeat-backed read timeouts, and isolated goroutines so one
   venue failing does not take down the others.
-- **Metrics.** Prometheus counters and histograms for messages, parse errors,
-  trades, book gaps, resyncs, sink batch size, flush latency, and end-to-end
-  latency.
+- **Metrics.** Prometheus counters and histograms for messages and parse errors
+  (trade feeds), trades, book gaps, resyncs, sink batch size, flush latency, and
+  end-to-end latency.
 - **Order-book firehose (opt-in).** The full L2 book can be persisted to a
   `book_updates` table, about 0.6 GB/day, bounded by a 30-day `TTL`. Off by
-  default because it is roughly 1000x the volume of trades.
+  default because it is tens of times the volume of trades (~500/sec vs ~14/sec
+  across the six default symbols).
 - **Live dashboard.** A self-contained web UI (cross-venue quote grid, depth
   ladder, time & sales tape) that reads the engine's in-memory book state and
   streams over Server-Sent Events instead of polling.
@@ -179,8 +180,8 @@ stay private.
 volume and survives restarts. Trades are about 1 GB/month for the default six
 symbols and are kept for 90 days (their own TTL). The full L2 firehose can also be persisted to `book_updates` by setting
 `persist_books: true`. It is off by default because books are far higher volume
-than trades (measured about 500 book updates/sec versus a few trades/sec across
-the six default symbols). ClickHouse compresses them to about 13 bytes/row, so
+than trades (measured about 500 book updates/sec versus about 14 trades/sec
+across the six default symbols, so tens of times the volume). ClickHouse compresses them to about 13 bytes/row, so
 the firehose runs about 0.6 GB/day; with the 30-day TTL (keyed on `ts_received`)
 that settles around 18 GB, which fits the boot disk. A dedicated volume gives
 room to add venues or symbols.
