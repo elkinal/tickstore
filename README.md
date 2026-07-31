@@ -213,6 +213,11 @@ relative, not absolute. True numbers need an NTP-disciplined clock.
 `tickstore_book_resyncs_total`, `tickstore_sink_batch_rows`,
 `tickstore_sink_flush_seconds`, `tickstore_e2e_latency_seconds`.
 
+`messages_total` and `parse_errors_total` count the trade feeds; book-feed
+integrity is tracked by `book_gaps_total` / `book_resyncs_total` (Kraken and OKX,
+which expose a checksum / sequence). `e2e_latency_seconds` is `ts_received -
+ts_exchange` (receipt vs exchange timestamp), so it is sensitive to clock skew.
+
 ## Layout
 
 ```

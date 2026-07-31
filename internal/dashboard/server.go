@@ -1,6 +1,8 @@
 // Package dashboard serves a small live web view of the running engine: a
-// scrolling trade and order-book feed plus storage stats (row counts and disk
-// usage per table, and the live insert rate), all read from ClickHouse.
+// scrolling trade and order-book feed plus storage stats. The live views
+// (quotes, depth ladder, tape) are read from the engine's in-memory state
+// (internal/live); only the storage stats (row counts, disk usage) come from
+// ClickHouse. Updates are pushed to the browser over one SSE connection.
 package dashboard
 
 import (
@@ -28,8 +30,9 @@ const feedLimit = 200
 //go:embed index.html
 var indexHTML []byte
 
-// Store is the persistent read side the dashboard needs for storage stats and
-// the trade tape. *sink.ClickHouse satisfies it.
+// Store is the persistent (ClickHouse) read side: storage stats, plus the legacy
+// /api/tape endpoint. The live SSE tape comes from the in-memory registry, not
+// from here. *sink.ClickHouse satisfies it.
 type Store interface {
 	TableStats(ctx context.Context) ([]sink.TableStat, error)
 	RecentTrades(ctx context.Context, sinceNanos int64, limit int) ([]sink.FeedRow, error)

@@ -127,8 +127,10 @@ development instead of letting a poison string slip into output unnoticed.
 
 **Decision.** Each connector runs its own reconnect loop: on disconnect, wait a
 random duration in [0, backoff) (full jitter), doubling backoff up to a cap, and
-reset backoff once a session receives data. Reads use a timeout backed by
-subscribing to the venue's heartbeat channel.
+reset backoff once a session receives data. Reads use a timeout backed by a
+venue heartbeat where one exists (Coinbase subscribes a heartbeat channel,
+Kraken sends periodic heartbeats); OKX has no server heartbeat, so a client-side
+ping every 20s (well under the read timeout) serves the same liveness role.
 
 **Why.** Jittered exponential backoff is the standard way to recover without
 hammering a struggling venue or reconnecting in synchronized waves. TCP can go
@@ -420,7 +422,10 @@ cover.
   point and leading zeros removed, then CRC32 (IEEE). Precision comes from the
   `instrument` channel. Verified offline against real BTC/USD (price precision 1)
   and ETH/USD (precision 2) snapshots before trusting it live.
-- Validate every frame; on mismatch, resync by reconnecting for a fresh snapshot.
+- Validate every frame once the pair's precision is known (from the `instrument`
+  channel); on mismatch, resync by reconnecting for a fresh snapshot. Frames that
+  arrive before the first `instrument` message are applied unchecked (a small
+  startup window).
 - `Book.Trim(depth)` after each frame: the depth-limited feed maintains a window
   and doesn't reliably delete levels that leave it, so an untrimmed book
   accumulates stale edge levels that eventually corrupt the top-10 checksum.

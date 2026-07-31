@@ -15,7 +15,8 @@ order book reconstruction, gap detection, and a ClickHouse tick store.
 ## Non-goals (v1)
 - No trading, no order execution, no private/authenticated endpoints.
 - No historical backfill beyond what resync requires.
-- No UI. CLI + metrics endpoint only.
+- No UI in v1; CLI + metrics endpoint only. (A read-only live dashboard was
+  added post-v1.)
 - No Binance (US geo-restrictions); revisit later.
 
 ## Architecture
@@ -31,7 +32,7 @@ One binary, several packages:
                           trigger resync, checksum validation where the
                           venue supports it (Kraken does)
     internal/sink/        ClickHouse writer: batching, retries, backpressure
-    internal/metrics/     Prometheus counters/gauges/histograms
+    internal/metrics/     Prometheus counters + histograms
     internal/config/      YAML config: venues, symbols, batch sizes
 
 Data flow:
@@ -42,20 +43,23 @@ Data flow:
 - Trade: venue, symbol, ts_exchange, ts_received, price, size, side, trade_id
 - BookUpdate: venue, symbol, ts_exchange, ts_received, side, price, size,
   seq, is_snapshot
-- Prices/sizes as fixed-point int64 with per-symbol scale, not float64.
+- Prices/sizes as fixed-point int64 (one global scale of 8 in v1), not float64.
   (Rationale: exact equality, no float drift.)
 
 ## Order book engine (internal/book)
 - Sorted bid/ask sides; apply deltas by seq.
-- Gap detection: if incoming seq != expected, mark book stale, request
-  snapshot, buffer deltas, replay after snapshot. Count gaps in metrics.
+- Gap detection: if incoming seq != expected, mark book stale, buffer deltas,
+  and replay them after the next snapshot. Count gaps in metrics. (In the live
+  connectors that snapshot comes from reconnecting and re-subscribing, not an
+  in-band snapshot request; the buffer/replay path is the engine's mechanism,
+  exercised by the property tests.)
 - Expose top-of-book and depth-N views for validation.
 
 ## ClickHouse schema (start here, iterate)
 - trades table: MergeTree, ORDER BY (venue, symbol, ts_exchange),
   partition by toYYYYMMDD(ts_exchange).
 - book_updates table: same shape plus seq, is_snapshot.
-- TTL: raw book_updates 30 days, trades kept indefinitely.
+- TTL: book_updates 30 days, trades 90 days.
 - Async batch inserts from sink (target: 1k-10k rows per insert, flush
   on size or 250ms, whichever first).
 
@@ -80,7 +84,8 @@ Data flow:
 
 ## Benchmarks to publish in README
 - Sustained messages/sec ingested per venue and total.
-- End-to-end p50/p99 latency (exchange ts to ClickHouse-committed).
+- End-to-end p50/p99 latency (ts_received minus ts_exchange, i.e. receipt vs
+  exchange timestamp, not commit time; clock-skew sensitive).
 - Gap/resync counts over a 72h run.
 - ClickHouse: compression ratio achieved, example analytical queries
   (VWAP, spread over time) with timings.
