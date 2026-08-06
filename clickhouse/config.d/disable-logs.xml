@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<!--
+  Disable ClickHouse's built-in system telemetry logs.
+
+  This is a market-data store on a small (40 GB) disk. ClickHouse writes a set of
+  internal *_log tables by default (text_log, query_log, part_log, ...) that a
+  tick store never queries. On this box they grew to ~12 GB (text_log alone
+  reached ~6 GB / 142M rows) and helped fill the disk, which wedged inserts.
+
+  Setting remove="1" tells the server not to configure or write these logs.
+  error_log and crash_log are left enabled: both are tiny and occasionally useful.
+-->
+<clickhouse>
+    <text_log remove="1"/>
+    <trace_log remove="1"/>
+    <query_log remove="1"/>
+    <query_thread_log remove="1"/>
+    <query_views_log remove="1"/>
+    <part_log remove="1"/>
+    <metric_log remove="1"/>
+    <asynchronous_metric_log remove="1"/>
+    <processors_profile_log remove="1"/>
+    <session_log remove="1"/>
+    <opentelemetry_span_log remove="1"/>
+    <asynchronous_insert_log remove="1"/>
+</clickhouse>
