@@ -380,10 +380,17 @@ function fmtPrice(p){ return p >= 1000 ? Math.round(p).toLocaleString("en-US") :
 function renderChart(){
   const svg = $("priceChart"); if(!svg) return;
   const W=1000, H=240, padT=12, padB=16, padL=54, padR=10;
-  const now = Date.now(), tMin = now - CHART_WINDOW_MS, tMax = now;
-  let pMin=Infinity, pMax=-Infinity, any=false;
-  for(const s of CHART_SERIES) for(const pt of priceHist[s.venue]){ if(pt.p<pMin)pMin=pt.p; if(pt.p>pMax)pMax=pt.p; any=true; }
+  const now = Date.now();
+  let pMin=Infinity, pMax=-Infinity, tOldest=now, any=false;
+  for(const s of CHART_SERIES){
+    const pts = priceHist[s.venue];
+    if(pts.length) tOldest = Math.min(tOldest, pts[0].t);
+    for(const pt of pts){ if(pt.p<pMin)pMin=pt.p; if(pt.p>pMax)pMax=pt.p; any=true; }
+  }
   if(!any){ svg.innerHTML=""; renderLegend(); return; }
+  // Span from the oldest point we have (capped at the window) to now, so the
+  // line fills the width immediately and scrolls once it reaches 3 minutes.
+  const tMax = now, tMin = Math.min(Math.max(now - CHART_WINDOW_MS, tOldest), now - 1000);
   if(pMin===pMax){ pMin-=1; pMax+=1; }
   const gp=(pMax-pMin)*0.12 || 1; pMin-=gp; pMax+=gp;
   const X = t => padL + (t-tMin)/(tMax-tMin) * (W-padL-padR);
