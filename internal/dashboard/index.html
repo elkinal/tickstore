@@ -858,6 +858,17 @@ attachHover("basisChart", renderBasis);
 attachHover("latChart", renderLatency);
 attachHover("rateChart", renderThroughput);
 
+// Steady render tick: the live charts otherwise only redraw when a data message
+// lands (price ~2×/s, latency/throughput ~every 2s), so the time window sat
+// still between messages and only moved when the cursor forced a redraw. Redraw
+// the visible live charts a few times a second so the window scrolls smoothly.
+// Non-live ranges refresh on their own fetch timer, and hidden tabs are skipped.
+setInterval(() => {
+  if(document.hidden || !isLive()) return;
+  if(!$("tab-market").hidden) renderPrice();
+  if(!$("tab-tech").hidden){ renderBasis(); renderLatency(); renderThroughput(); }
+}, 250);
+
 // ---------- CSV snapshot ----------
 // Exports what the browser already holds — the current cross-venue quotes plus
 // the depth ladder and tape of the selected market. It's built entirely in the
