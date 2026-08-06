@@ -26,6 +26,9 @@ func (fakeStore) PriceHistory(_ context.Context, _, _ int) ([]sink.PricePoint, e
 func (fakeStore) LatencyHistory(_ context.Context, _, _ int) ([]sink.LatencyPoint, error) {
 	return []sink.LatencyPoint{{Venue: "coinbase", TMs: 1, P50: 55, P99: 97}}, nil
 }
+func (fakeStore) ThroughputHistory(_ context.Context, _, _ int) ([]sink.RatePoint, error) {
+	return []sink.RatePoint{{Venue: "coinbase", Source: "trades", TMs: 1, Rate: 14}}, nil
+}
 
 type fakeLive struct{}
 

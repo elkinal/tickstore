@@ -260,3 +260,52 @@ func (c *ClickHouse) LatencyHistory(ctx context.Context, windowSec, bucketSec in
 	}
 	return out, rows.Err()
 }
+
+// RatePoint is one venue's ingest rate for one source ("trades" or "book") at
+// one time bucket, in messages per second. TMs is a millisecond epoch.
+type RatePoint struct {
+	Venue  string  `json:"venue"`
+	Source string  `json:"source"`
+	TMs    int64   `json:"t_ms"`
+	Rate   float64 `json:"rate"`
+}
+
+// ThroughputHistory returns per-venue ingest throughput (rows written per
+// second) for both the trade and book-update feeds over the last windowSec
+// seconds, bucketed to bucketSec. It feeds the dashboard's throughput chart —
+// the "how much" counterpart to the latency chart's "how fast" — and makes the
+// order-book firehose (many times the trade volume) visible.
+func (c *ClickHouse) ThroughputHistory(ctx context.Context, windowSec, bucketSec int) ([]RatePoint, error) {
+	const q = `
+		SELECT venue, 'trades' AS source,
+		       toUInt64(toUnixTimestamp(toStartOfInterval(ts_received, toIntervalSecond(?)))) * 1000 AS t_ms,
+		       count() / ? AS rate
+		FROM tickstore.trades
+		WHERE ts_received > now() - toIntervalSecond(?)
+		GROUP BY venue, t_ms
+		UNION ALL
+		SELECT venue, 'book' AS source,
+		       toUInt64(toUnixTimestamp(toStartOfInterval(ts_received, toIntervalSecond(?)))) * 1000 AS t_ms,
+		       count() / ? AS rate
+		FROM tickstore.book_updates
+		WHERE ts_received > now() - toIntervalSecond(?)
+		GROUP BY venue, t_ms
+		ORDER BY t_ms`
+	rows, err := c.conn.Query(ctx, q, bucketSec, bucketSec, windowSec, bucketSec, bucketSec, windowSec)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: throughput history: %w", err)
+	}
+	defer rows.Close()
+
+	var out []RatePoint
+	for rows.Next() {
+		var venue, source string
+		var tms uint64
+		var rate float64
+		if err := rows.Scan(&venue, &source, &tms, &rate); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan rate point: %w", err)
+		}
+		out = append(out, RatePoint{Venue: venue, Source: source, TMs: int64(tms), Rate: rate})
+	}
+	return out, rows.Err()
+}

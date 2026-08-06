@@ -38,6 +38,7 @@ type Store interface {
 	RecentTrades(ctx context.Context, sinceNanos int64, limit int) ([]sink.FeedRow, error)
 	PriceHistory(ctx context.Context, windowSec, bucketSec int) ([]sink.PricePoint, error)
 	LatencyHistory(ctx context.Context, windowSec, bucketSec int) ([]sink.LatencyPoint, error)
+	ThroughputHistory(ctx context.Context, windowSec, bucketSec int) ([]sink.RatePoint, error)
 }
 
 // Live is the in-memory read side: current books and recent trades, for the
@@ -174,6 +175,9 @@ func (h *handler) stream(w http.ResponseWriter, r *http.Request) {
 			}
 			if lat, err := h.store.LatencyHistory(ctx, 180, 3); err == nil {
 				payload["latency"] = lat
+			}
+			if rate, err := h.store.ThroughputHistory(ctx, 180, 3); err == nil {
+				payload["throughput"] = rate
 			}
 		}
 		b, err := json.Marshal(payload)

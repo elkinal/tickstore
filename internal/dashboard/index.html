@@ -244,6 +244,13 @@
     <div class="chartwrap"><svg id="latChart" class="pc" viewBox="0 0 1000 240"></svg></div>
     <div class="legend" id="latLegend"></div>
   </div>
+
+  <div class="panel chart-panel">
+    <div class="ph"><span class="t">Ingest throughput</span><span class="n">rows / sec · per venue</span></div>
+    <div class="sel" id="rateSel"></div>
+    <div class="chartwrap"><svg id="rateChart" class="pc" viewBox="0 0 1000 240"></svg></div>
+    <div class="legend" id="rateLegend"></div>
+  </div>
   </div><!-- /tab-tech -->
 
   <div class="charttip" id="chartTip"></div>
@@ -439,14 +446,17 @@ const priceHist = {};
 for(const a of CHART_ASSETS) priceHist[a] = { coinbase: [], kraken: [], okx: [] };
 const basisHist = { BTC: [], ETH: [] };
 const latHist = { p50: { coinbase: [], kraken: [], okx: [] }, p99: { coinbase: [], kraken: [], okx: [] } };
+const rateHist = { trades: { coinbase: [], kraken: [], okx: [] }, book: { coinbase: [], kraken: [], okx: [] } };
 
 let chartAsset = "BTC";  // BTC/ETH selector, shared by the price + spread charts
 let latMetric = "p50";   // p50/p99 selector for the latency chart
+let rateSource = "trades"; // trades/book selector for the throughput chart
 const hoverX = {};       // hoverX[svgId] = cursor x in viewBox units, per chart
 
 function fmtPrice(p){ return p >= 1000 ? Math.round(p).toLocaleString("en-US") : p.toFixed(2); }
 function fmtUsd(p){ return "$" + (p >= 100 ? Math.round(p).toLocaleString("en-US") : p.toFixed(2)); }
 function fmtMs(p){ return (p >= 100 ? Math.round(p) : p.toFixed(1)) + " ms"; }
+function fmtRate(p){ return (p >= 100 ? Math.round(p) : p.toFixed(1)) + "/s"; }
 
 function nearest(arr, t){
   if(!arr || !arr.length) return null;
@@ -556,6 +566,11 @@ function renderLatency(){
   drawChart("latChart", { series, zeroFloor: true, fmtLbl: p => Math.round(p) + " ms", fmtVal: fmtMs });
   renderLegendEl("latLegend", series, fmtMs);
 }
+function renderThroughput(){
+  const series = venueSeries(rateHist[rateSource] || {});
+  drawChart("rateChart", { series, zeroFloor: true, fmtLbl: p => Math.round(p) + "/s", fmtVal: fmtRate });
+  renderLegendEl("rateLegend", series, fmtRate);
+}
 
 // buildSel populates a .sel toggle once and wires each button to onPick.
 function buildSel(hostId, opts, cur, onPick){
@@ -613,6 +628,22 @@ function ingestLatency(pts){
   renderLatency();
 }
 
+// ingestThroughput rebuilds the per-venue rate windows from the server's points.
+// The most recent bucket is still filling, so its rate reads low — drop it so
+// the line doesn't dip at the right edge on every refresh.
+function ingestThroughput(pts){
+  const next = { trades: { coinbase: [], kraken: [], okx: [] }, book: { coinbase: [], kraken: [], okx: [] } };
+  let maxT = 0;
+  for(const pt of pts) if(pt.t_ms > maxT) maxT = pt.t_ms;
+  for(const pt of pts){
+    if(pt.t_ms === maxT) continue;
+    const src = next[pt.source]; if(!src) continue;
+    const arr = src[pt.venue]; if(arr) arr.push({ t: pt.t_ms, p: pt.rate });
+  }
+  rateHist.trades = next.trades; rateHist.book = next.book;
+  renderThroughput();
+}
+
 // Seed price + spread with recent history from ClickHouse so the charts load
 // with full lines instead of drawing from empty; live updates append on top.
 async function seedChart(){
@@ -646,6 +677,7 @@ buildSel("chartSel", CHART_ASSETS, () => chartAsset, a => {
   renderPrice(); renderBasis();
 });
 buildSel("latSel", ["p50", "p99"], () => latMetric, m => { latMetric = m; hoverX.latChart = null; renderLatency(); });
+buildSel("rateSel", ["trades", "book"], () => rateSource, s => { rateSource = s; hoverX.rateChart = null; renderThroughput(); });
 setAssetTitles();
 
 // Top-level tabs: keep the market view (quotes, book, tape, price) separate from
@@ -658,7 +690,7 @@ setAssetTitles();
     for(const x of nav.children) x.classList.toggle("on", x === b);
     $("tab-market").hidden = b.dataset.tab !== "market";
     $("tab-tech").hidden = b.dataset.tab !== "tech";
-    renderPrice(); renderBasis(); renderLatency();
+    renderPrice(); renderBasis(); renderLatency(); renderThroughput();
   };
 })();
 
@@ -671,6 +703,7 @@ es.onmessage = ev => {
   if(d.quotes) onQuotes(d.quotes);
   if(d.quotes) recordPrices(d.quotes);
   if(d.latency) ingestLatency(d.latency);
+  if(d.throughput) ingestThroughput(d.throughput);
   if(d.depth){ lastDepth = d.depth; showLadder(); }
   if(d.trades && d.trades.length) appendTape(d.trades);
   if(d.stats) renderStats(d.stats);
@@ -705,6 +738,7 @@ function attachHover(svgId, renderFn){
 attachHover("priceChart", renderPrice);
 attachHover("basisChart", renderBasis);
 attachHover("latChart", renderLatency);
+attachHover("rateChart", renderThroughput);
 
 // ---------- CSV snapshot ----------
 // Exports what the browser already holds — the current cross-venue quotes plus
