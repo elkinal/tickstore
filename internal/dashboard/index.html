@@ -518,7 +518,7 @@ function renderBasis(){
 }
 function renderLatency(){
   const series = venueSeries(latHist[latMetric] || {});
-  drawChart("latChart", { series, zeroFloor: true, fmtLbl: p => Math.round(p), fmtVal: fmtMs });
+  drawChart("latChart", { series, zeroFloor: true, fmtLbl: p => Math.round(p) + " ms", fmtVal: fmtMs });
   renderLegendEl("latLegend", series, fmtMs);
 }
 
