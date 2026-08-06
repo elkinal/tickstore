@@ -446,7 +446,7 @@ function nearest(arr, t){
 function updateTip(t, rows){
   const el = $("chartTip"); if(!el) return;
   if(!rows.length){ el.style.display="none"; return; }
-  const d = new Date(t), tm = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const d = new Date(t), tm = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} UTC`;
   el.innerHTML = `<div class="tt-t">${tm}</div>` + rows.map(r =>
     `<div class="tt-row"><span class="tt-sw" style="background:${r.color}"></span><span class="tt-v">${r.venue}</span><span class="tt-p">${fmtPrice(r.price)}</span></div>`).join("");
   el.style.display = "block";
