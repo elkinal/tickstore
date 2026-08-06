@@ -640,6 +640,9 @@ function ingestThroughput(pts){
     const src = next[pt.source]; if(!src) continue;
     const arr = src[pt.venue]; if(arr) arr.push({ t: pt.t_ms, p: pt.rate });
   }
+  // The UNION ALL query doesn't guarantee per-series time order, so sort each
+  // venue's samples by time — otherwise the polyline connects points out of order.
+  for(const s of ["trades", "book"]) for(const v of VENUES) next[s][v].sort((x,y)=>x.t-y.t);
   rateHist.trades = next.trades; rateHist.book = next.book;
   renderThroughput();
 }
