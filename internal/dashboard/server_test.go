@@ -21,7 +21,7 @@ func (fakeStore) RecentTrades(_ context.Context, since int64, _ int) ([]sink.Fee
 	return []sink.FeedRow{{TsNanos: 42, Time: "12:00:00", Venue: "okx", Symbol: "BTC-USDT", Side: "buy", Size: "0.5", Price: "64000"}}, nil
 }
 func (fakeStore) PriceHistory(_ context.Context, _, _ int) ([]sink.PricePoint, error) {
-	return []sink.PricePoint{{Venue: "coinbase", Base: "BTC", TMs: 1, Price: 64000}}, nil
+	return []sink.PricePoint{{Venue: "coinbase", Base: "BTC", Quote: "USD", TMs: 1, Price: 64000}}, nil
 }
 func (fakeStore) LatencyHistory(_ context.Context, _, _ int) ([]sink.LatencyPoint, error) {
 	return []sink.LatencyPoint{{Venue: "coinbase", TMs: 1, P50: 55, P99: 97}}, nil

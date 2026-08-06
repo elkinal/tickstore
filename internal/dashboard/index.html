@@ -151,6 +151,7 @@
   .pc { width: 100%; height: auto; display: block; cursor: crosshair; }
   .pc .pc-grid { stroke: var(--line2); stroke-width: 1; }
   .pc .pc-lbl { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .pc .pc-xlbl { fill: var(--muted); font-size: 10.5px; font-variant-numeric: tabular-nums; }
   .pc .pc-cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
   .legend { display: flex; flex-wrap: wrap; gap: 18px; padding: 4px 14px 12px; font-size: 12px; }
   .legend .lg { display: inline-flex; align-items: center; gap: 7px; }
@@ -171,6 +172,7 @@
      (they scale with width) to keep axis labels legible. */
   @media (max-width: 820px) {
     .pc .pc-lbl { font-size: 16px; }
+    .pc .pc-xlbl { font-size: 15px; }
     .legend { gap: 11px 14px; font-size: 12px; padding: 4px 12px 12px; }
     .chart-panel .sel { padding: 7px 12px; }
   }
@@ -216,7 +218,7 @@
   </div>
 
   <div class="panel chart-panel">
-    <div class="ph"><span class="t" id="basisTitle">Cross-venue spread</span><span class="n">max − min across venues · live</span></div>
+    <div class="ph"><span class="t" id="basisTitle">Cross-venue spread</span><span class="n">max − min · same-currency venues · live</span></div>
     <div class="chartwrap"><svg id="basisChart" class="pc" viewBox="0 0 1000 240"></svg></div>
     <div class="legend" id="basisLegend"></div>
   </div>
@@ -402,9 +404,14 @@ function renderStats(s){
 // ride along on the same stream. Each keeps a rolling 3-minute window and always
 // spans the full width.
 const CHART_WINDOW_MS = 3 * 60 * 1000;
+const STALE_MS = 20 * 1000; // if a series has no fresh sample, stop extending it to "now"
 const VENUE_COLOR = { coinbase: "#3a91c9", kraken: "#bd6b9a", okx: "#c98216" }; // validated CVD-safe trio
 const VENUES = ["coinbase", "kraken", "okx"];
 const CHART_ASSETS = ["BTC", "ETH"];
+// The spread chart only compares same-currency prices, so a USD-vs-USDT gap
+// (the stablecoin basis) isn't mistaken for a cross-venue dislocation.
+const REF_QUOTE = "USD";
+const venueQuote = {}; // `${base}|${venue}` -> quote currency, learned from the feed
 // Phones scale the wide viewBox down hard, shrinking SVG-space text with it; a
 // narrower, taller box keeps axis labels and lines legible.
 const IS_MOBILE = matchMedia("(max-width: 820px)").matches;
@@ -440,7 +447,7 @@ function nearest(arr, t){
 function drawChart(svgId, cfg){
   const svg = $(svgId); if(!svg) return;
   svg.setAttribute("viewBox", `0 0 ${CHART_W} ${CHART_H}`);
-  const W=CHART_W, H=CHART_H, padT=12, padB=16, padL=cfg.padL||54, padR=10;
+  const W=CHART_W, H=CHART_H, padT=12, padB=22, padL=cfg.padL||54, padR=10;
   const now = Date.now();
   let pMin=Infinity, pMax=-Infinity, tOldest=now, any=false;
   for(const s of cfg.series){
@@ -462,16 +469,28 @@ function drawChart(svgId, cfg){
     h += `<line class="pc-grid" x1="${padL}" y1="${y.toFixed(1)}" x2="${W-padR}" y2="${y.toFixed(1)}"/>`;
     h += `<text class="pc-lbl" x="6" y="${(y+3.5).toFixed(1)}">${cfg.fmtLbl(p)}</text>`;
   }
+  // X-axis: a few time ticks (mm:ss UTC) so the horizontal position is readable.
+  for(let i=0;i<=3;i++){
+    const f = i/3, tx = padL + f*(W-padL-padR), tt = tMin + f*(tMax-tMin), d = new Date(tt);
+    const anchor = i===0 ? "start" : (i===3 ? "end" : "middle");
+    h += `<text class="pc-xlbl" x="${tx.toFixed(1)}" y="${(H-6).toFixed(1)}" text-anchor="${anchor}">${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}</text>`;
+  }
   for(const s of cfg.series){
     const pts = s.pts; if(!pts.length) continue;
-    // Hold the first sample back to tMin and the last forward to tMax so a line
-    // whose data starts/ends mid-window still spans the full width.
+    // Hold the first sample back to tMin so a line whose data starts mid-window
+    // still spans the full width. On the right, only extend to "now" while the
+    // feed is fresh — a stalled venue stops short of the edge (with a hollow end
+    // dot) instead of drawing a flat line that looks like a steady price.
     const first = pts[0], last = pts[pts.length-1];
+    const stale = (now - last.t) > STALE_MS;
     const coords = [`${X(tMin).toFixed(1)},${Y(first.p).toFixed(1)}`];
     for(const pt of pts) coords.push(`${X(pt.t).toFixed(1)},${Y(pt.p).toFixed(1)}`);
-    coords.push(`${X(tMax).toFixed(1)},${Y(last.p).toFixed(1)}`);
+    if(!stale) coords.push(`${X(tMax).toFixed(1)},${Y(last.p).toFixed(1)}`);
     h += `<polyline points="${coords.join(" ")}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
-    h += `<circle cx="${X(tMax).toFixed(1)}" cy="${Y(last.p).toFixed(1)}" r="2.6" fill="${s.color}"/>`;
+    const ex = stale ? X(last.t) : X(tMax);
+    h += stale
+      ? `<circle cx="${ex.toFixed(1)}" cy="${Y(last.p).toFixed(1)}" r="2.8" fill="var(--bg)" stroke="${s.color}" stroke-width="1.6"/>`
+      : `<circle cx="${ex.toFixed(1)}" cy="${Y(last.p).toFixed(1)}" r="2.6" fill="${s.color}"/>`;
   }
   // Hover crosshair: dashed vertical line, a dot on each series at the nearest
   // sample, and a tooltip listing exact values.
@@ -532,7 +551,7 @@ function buildSel(hostId, opts, cur, onPick){
 }
 function setAssetTitles(){
   $("chartTitle").textContent = chartAsset + " · cross-venue price";
-  $("basisTitle").textContent = chartAsset + " · venue spread";
+  $("basisTitle").textContent = chartAsset + " · " + REF_QUOTE + " venue spread";
 }
 
 function recordPrices(quotes){
@@ -541,14 +560,20 @@ function recordPrices(quotes){
     for(const q of quotes){
       const asset = priceHist[q.base]; if(!asset) continue;
       const h = asset[q.venue]; if(!h) continue;
+      venueQuote[q.base + "|" + q.venue] = q.quote;
       const p = q.last || q.mid; if(!p) continue; // last-trade, matching the seeded history
       h.push({ t: now, p });
       while(h.length && h[0].t < cutoff) h.shift();
     }
-    // Derive the cross-venue spread from the latest price per venue, per asset.
+    // Derive the cross-venue spread from the latest price per venue, per asset —
+    // only among venues quoting the reference currency, so a USD/USDT gap isn't
+    // counted as venue dislocation.
     for(const a of CHART_ASSETS){
       const vals = [];
-      for(const v of VENUES){ const arr = priceHist[a][v]; if(arr.length) vals.push(arr[arr.length-1].p); }
+      for(const v of VENUES){
+        if(venueQuote[a + "|" + v] !== REF_QUOTE) continue;
+        const arr = priceHist[a][v]; if(arr.length) vals.push(arr[arr.length-1].p);
+      }
       if(vals.length >= 2){
         const bh = basisHist[a];
         bh.push({ t: now, p: Math.max(...vals) - Math.min(...vals) });
@@ -578,12 +603,20 @@ async function seedChart(){
   try {
     const res = await fetch("/api/pricehistory"); if(!res.ok) return;
     const pts = (await res.json()).points || [];
-    for(const pt of pts){ const a = priceHist[pt.base]; if(!a) continue; const h = a[pt.venue]; if(h) h.push({ t: pt.t_ms, p: pt.price }); }
+    for(const pt of pts){
+      const a = priceHist[pt.base]; if(!a) continue; const h = a[pt.venue]; if(!h) continue;
+      venueQuote[pt.base + "|" + pt.venue] = pt.quote;
+      h.push({ t: pt.t_ms, p: pt.price });
+    }
     for(const a of CHART_ASSETS) for(const v of VENUES) priceHist[a][v].sort((x,y)=>x.t-y.t);
-    // Rebuild the spread series per bucket (venues share bucket timestamps).
+    // Rebuild the spread series per bucket (venues share bucket timestamps),
+    // using only reference-currency venues so it matches the live computation.
     for(const a of CHART_ASSETS){
       const byT = new Map();
-      for(const v of VENUES) for(const pt of priceHist[a][v]){ if(!byT.has(pt.t)) byT.set(pt.t, []); byT.get(pt.t).push(pt.p); }
+      for(const v of VENUES){
+        if(venueQuote[a + "|" + v] !== REF_QUOTE) continue;
+        for(const pt of priceHist[a][v]){ if(!byT.has(pt.t)) byT.set(pt.t, []); byT.get(pt.t).push(pt.p); }
+      }
       const arr = [];
       for(const t of [...byT.keys()].sort((x,y)=>x-y)){ const vals = byT.get(t); if(vals.length >= 2) arr.push({ t, p: Math.max(...vals) - Math.min(...vals) }); }
       basisHist[a] = arr;
