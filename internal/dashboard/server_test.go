@@ -20,8 +20,8 @@ func (fakeStore) TableStats(context.Context) ([]sink.TableStat, error) {
 func (fakeStore) RecentTrades(_ context.Context, since int64, _ int) ([]sink.FeedRow, error) {
 	return []sink.FeedRow{{TsNanos: 42, Time: "12:00:00", Venue: "okx", Symbol: "BTC-USDT", Side: "buy", Size: "0.5", Price: "64000"}}, nil
 }
-func (fakeStore) BTCPriceHistory(_ context.Context, _, _ int) ([]sink.PricePoint, error) {
-	return []sink.PricePoint{{Venue: "coinbase", TMs: 1, Price: 64000}}, nil
+func (fakeStore) PriceHistory(_ context.Context, _, _ int) ([]sink.PricePoint, error) {
+	return []sink.PricePoint{{Venue: "coinbase", Base: "BTC", TMs: 1, Price: 64000}}, nil
 }
 
 type fakeLive struct{}

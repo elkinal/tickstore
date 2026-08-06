@@ -163,28 +163,31 @@ func reverse(rows []FeedRow) {
 	}
 }
 
-// PricePoint is one (venue, time, price) sample for the price-history chart.
-// TMs is a millisecond epoch; Price is the decimal price (fixed-point / 1e8).
+// PricePoint is one (venue, base, time, price) sample for the price-history
+// chart. Base is the asset ("BTC" or "ETH"); TMs is a millisecond epoch; Price
+// is the decimal price (fixed-point / 1e8).
 type PricePoint struct {
 	Venue string  `json:"venue"`
+	Base  string  `json:"base"`
 	TMs   int64   `json:"t_ms"`
 	Price float64 `json:"price"`
 }
 
-// BTCPriceHistory returns the last-trade BTC price per venue over the last
-// windowSec seconds, bucketed to bucketSec. It seeds the dashboard's price
-// chart so the page loads with a full line instead of drawing from empty. The
-// three BTC symbols are listed explicitly because each venue names it
-// differently (BTC-USD, BTC/USD, BTC-USDT).
-func (c *ClickHouse) BTCPriceHistory(ctx context.Context, windowSec, bucketSec int) ([]PricePoint, error) {
+// PriceHistory returns the last-trade price per venue and asset (BTC and ETH)
+// over the last windowSec seconds, bucketed to bucketSec. It seeds the
+// dashboard's price chart so the page loads with a full line instead of drawing
+// from empty. Symbols are listed explicitly because each venue names them
+// differently (BTC-USD, BTC/USD, BTC-USDT, and the ETH equivalents).
+func (c *ClickHouse) PriceHistory(ctx context.Context, windowSec, bucketSec int) ([]PricePoint, error) {
 	const q = `
 		SELECT venue,
+		       multiIf(startsWith(symbol, 'BTC'), 'BTC', startsWith(symbol, 'ETH'), 'ETH', 'OTHER') AS base,
 		       toUInt64(toUnixTimestamp(toStartOfInterval(ts_received, toIntervalSecond(?)))) * 1000 AS t_ms,
 		       argMax(price, ts_received) / 1e8 AS price
 		FROM tickstore.trades
-		WHERE symbol IN ('BTC-USD', 'BTC/USD', 'BTC-USDT')
+		WHERE symbol IN ('BTC-USD', 'BTC/USD', 'BTC-USDT', 'ETH-USD', 'ETH/USD', 'ETH-USDT')
 		  AND ts_received > now() - toIntervalSecond(?)
-		GROUP BY venue, t_ms
+		GROUP BY venue, base, t_ms
 		ORDER BY t_ms`
 	rows, err := c.conn.Query(ctx, q, bucketSec, windowSec)
 	if err != nil {
@@ -194,13 +197,13 @@ func (c *ClickHouse) BTCPriceHistory(ctx context.Context, windowSec, bucketSec i
 
 	var out []PricePoint
 	for rows.Next() {
-		var venue string
+		var venue, base string
 		var tms uint64
 		var price float64
-		if err := rows.Scan(&venue, &tms, &price); err != nil {
+		if err := rows.Scan(&venue, &base, &tms, &price); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan price point: %w", err)
 		}
-		out = append(out, PricePoint{Venue: venue, TMs: int64(tms), Price: price})
+		out = append(out, PricePoint{Venue: venue, Base: base, TMs: int64(tms), Price: price})
 	}
 	return out, rows.Err()
 }

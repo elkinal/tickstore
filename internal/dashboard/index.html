@@ -196,7 +196,8 @@
   </div>
 
   <div class="panel chart-panel">
-    <div class="ph"><span class="t">BTC price · cross-venue</span><span class="n">last 3 min · live</span></div>
+    <div class="ph"><span class="t" id="chartTitle">Cross-venue price</span><span class="n">last 3 min · live</span></div>
+    <div class="sel" id="chartSel"></div>
     <div class="chartwrap"><svg id="priceChart" viewBox="0 0 1000 240"></svg></div>
     <div class="legend" id="chartLegend"></div>
     <div class="charttip" id="chartTip"></div>
@@ -365,24 +366,42 @@ function renderStats(s){
 // One Server-Sent Events connection replaces all polling: the server pushes a
 // snapshot ~2×/second and the browser just renders it. EventSource reconnects
 // on its own if the connection drops.
-// ---------- BTC cross-venue price chart ----------
-// Accumulates a rolling window of each venue's BTC mid from the quotes already
-// arriving over SSE (no server change needed) and draws it as three lines.
+// ---------- cross-venue price chart ----------
+// Accumulates a rolling window of each venue's last price per asset from the
+// quotes already arriving over SSE (no server change needed) and draws it as
+// three lines. An asset selector (BTC / ETH) picks which one is shown.
 const CHART_WINDOW_MS = 3 * 60 * 1000;
 const CHART_SERIES = [
   { venue: "coinbase", color: "#3a91c9" }, // validated CVD-safe categorical trio
   { venue: "kraken",   color: "#bd6b9a" },
   { venue: "okx",      color: "#c98216" },
 ];
-const priceHist = { coinbase: [], kraken: [], okx: [] };
-let hoverX = null; // cursor x in viewBox units while hovering the chart
+const CHART_ASSETS = ["BTC", "ETH"];
+// priceHist[asset][venue] = [{t, p}, …]; one rolling window per asset+venue.
+const priceHist = {};
+for(const a of CHART_ASSETS){ priceHist[a] = { coinbase: [], kraken: [], okx: [] }; }
+let chartAsset = "BTC";       // which asset the chart currently shows
+let hoverX = null;            // cursor x in viewBox units while hovering the chart
+
+function renderChartSel(){
+  const host = $("chartSel"); if(!host || host.children.length) return;
+  $("chartTitle").textContent = chartAsset + " · cross-venue price";
+  host.innerHTML = CHART_ASSETS.map(a=>`<button data-a="${a}">${a}</button>`).join("");
+  for(const b of host.children) b.onclick = ()=>{
+    chartAsset = b.dataset.a; markChartSel();
+    hoverX = null; $("chartTitle").textContent = chartAsset + " · cross-venue price";
+    renderChart();
+  };
+  markChartSel();
+}
+function markChartSel(){ const h=$("chartSel"); if(h) for(const b of h.children) b.classList.toggle("on", b.dataset.a===chartAsset); }
 
 function recordPrices(quotes){
   try {
     const now = Date.now(), cutoff = now - CHART_WINDOW_MS;
     for(const q of quotes){
-      if(q.base !== "BTC") continue;
-      const h = priceHist[q.venue]; if(!h) continue;
+      const asset = priceHist[q.base]; if(!asset) continue;
+      const h = asset[q.venue]; if(!h) continue;
       const p = q.last || q.mid; if(!p) continue; // last-trade, matching the seeded history
       h.push({ t: now, p });
       while(h.length && h[0].t < cutoff) h.shift();
@@ -393,11 +412,13 @@ function recordPrices(quotes){
 function fmtPrice(p){ return p >= 1000 ? Math.round(p).toLocaleString("en-US") : p.toFixed(2); }
 function renderChart(){
   const svg = $("priceChart"); if(!svg) return;
+  renderChartSel();
+  const series = priceHist[chartAsset] || {};
   const W=1000, H=240, padT=12, padB=16, padL=54, padR=10;
   const now = Date.now();
   let pMin=Infinity, pMax=-Infinity, tOldest=now, any=false;
   for(const s of CHART_SERIES){
-    const pts = priceHist[s.venue];
+    const pts = series[s.venue] || [];
     if(pts.length) tOldest = Math.min(tOldest, pts[0].t);
     for(const pt of pts){ if(pt.p<pMin)pMin=pt.p; if(pt.p>pMax)pMax=pt.p; any=true; }
   }
@@ -407,7 +428,8 @@ function renderChart(){
   const tMax = now, tMin = Math.min(Math.max(now - CHART_WINDOW_MS, tOldest), now - 1000);
   if(pMin===pMax){ pMin-=1; pMax+=1; }
   const gp=(pMax-pMin)*0.12 || 1; pMin-=gp; pMax+=gp;
-  const X = t => padL + (t-tMin)/(tMax-tMin) * (W-padL-padR);
+  const clampT = t => t < tMin ? tMin : (t > tMax ? tMax : t);
+  const X = t => padL + (clampT(t)-tMin)/(tMax-tMin) * (W-padL-padR);
   const Y = p => padT + (1-(p-pMin)/(pMax-pMin)) * (H-padT-padB);
   let h="";
   for(let i=0;i<=4;i++){
@@ -416,11 +438,16 @@ function renderChart(){
     h += `<text class="pc-lbl" x="6" y="${(y+3.5).toFixed(1)}">${fmtPrice(p)}</text>`;
   }
   for(const s of CHART_SERIES){
-    const pts = priceHist[s.venue]; if(pts.length<2) continue;
-    const d = pts.map(pt=>`${X(pt.t).toFixed(1)},${Y(pt.p).toFixed(1)}`).join(" ");
-    h += `<polyline points="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
-    const last = pts[pts.length-1];
-    h += `<circle cx="${X(last.t).toFixed(1)}" cy="${Y(last.p).toFixed(1)}" r="2.6" fill="${s.color}"/>`;
+    const pts = series[s.venue] || []; if(!pts.length) continue;
+    // Extend flat to both edges: a venue whose oldest/newest sample is inside the
+    // window would otherwise start or stop mid-chart. Hold the first price back to
+    // tMin and the last price forward to tMax so every line spans the full width.
+    const first = pts[0], last = pts[pts.length-1];
+    const coords = [`${X(tMin).toFixed(1)},${Y(first.p).toFixed(1)}`];
+    for(const pt of pts) coords.push(`${X(pt.t).toFixed(1)},${Y(pt.p).toFixed(1)}`);
+    coords.push(`${X(tMax).toFixed(1)},${Y(last.p).toFixed(1)}`);
+    h += `<polyline points="${coords.join(" ")}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    h += `<circle cx="${X(tMax).toFixed(1)}" cy="${Y(last.p).toFixed(1)}" r="2.6" fill="${s.color}"/>`;
   }
   // Hover crosshair: a dashed vertical line at the cursor plus a dot on each
   // line at the nearest sample, and a tooltip listing the exact prices.
@@ -429,7 +456,7 @@ function renderChart(){
     h += `<line class="pc-cross" x1="${hoverX.toFixed(1)}" y1="${padT}" x2="${hoverX.toFixed(1)}" y2="${(H-padB).toFixed(1)}"/>`;
     const rows = [];
     for(const s of CHART_SERIES){
-      const pt = nearest(priceHist[s.venue], ht); if(!pt) continue;
+      const pt = nearest(series[s.venue], ht); if(!pt) continue;
       h += `<circle cx="${X(pt.t).toFixed(1)}" cy="${Y(pt.p).toFixed(1)}" r="3.2" fill="${s.color}" stroke="var(--bg)" stroke-width="1.2"/>`;
       rows.push({ venue: s.venue, color: s.color, price: pt.p });
     }
@@ -453,21 +480,23 @@ function updateTip(t, rows){
 }
 function renderLegend(){
   const el = $("chartLegend"); if(!el) return;
+  const series = priceHist[chartAsset] || {};
   el.innerHTML = CHART_SERIES.map(s => {
-    const pts = priceHist[s.venue];
+    const pts = series[s.venue];
     const last = pts && pts.length ? fmtPrice(pts[pts.length-1].p) : "—";
     return `<span class="lg"><span class="sw" style="background:${s.color}"></span><span class="lv">${s.venue}</span> <span class="lp">${last}</span></span>`;
   }).join("");
 }
 
 // Seed the chart with recent history from ClickHouse so it loads with a full
-// line instead of drawing from empty; live updates append on top.
+// line instead of drawing from empty; live updates append on top. Points carry
+// their asset (base) so each goes into the right per-asset window.
 async function seedChart(){
   try {
     const res = await fetch("/api/pricehistory"); if(!res.ok) return;
     const pts = (await res.json()).points || [];
-    for(const pt of pts){ const h = priceHist[pt.venue]; if(h) h.push({ t: pt.t_ms, p: pt.price }); }
-    for(const k in priceHist) priceHist[k].sort((a,b)=>a.t-b.t);
+    for(const pt of pts){ const a = priceHist[pt.base]; if(!a) continue; const h = a[pt.venue]; if(h) h.push({ t: pt.t_ms, p: pt.price }); }
+    for(const a of CHART_ASSETS) for(const v in priceHist[a]) priceHist[a][v].sort((x,y)=>x.t-y.t);
     renderChart();
   } catch(e){}
 }
