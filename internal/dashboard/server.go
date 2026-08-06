@@ -36,6 +36,7 @@ var indexHTML []byte
 type Store interface {
 	TableStats(ctx context.Context) ([]sink.TableStat, error)
 	RecentTrades(ctx context.Context, sinceNanos int64, limit int) ([]sink.FeedRow, error)
+	BTCPriceHistory(ctx context.Context, windowSec, bucketSec int) ([]sink.PricePoint, error)
 }
 
 // Live is the in-memory read side: current books and recent trades, for the
@@ -62,6 +63,7 @@ func Serve(ctx context.Context, addr string, store Store, reg Live, log *slog.Lo
 	mux.HandleFunc("/api/tape", h.tape)
 	mux.HandleFunc("/api/book", h.book)
 	mux.HandleFunc("/api/depth", h.depth)
+	mux.HandleFunc("/api/pricehistory", h.priceHistory)
 	srv := &http.Server{Addr: addr, Handler: mux}
 
 	go func() {
@@ -215,6 +217,17 @@ func (h *handler) depth(w http.ResponseWriter, r *http.Request) {
 	symbol := r.URL.Query().Get("symbol")
 	bids, asks, ok := h.reg.Depth(venue, symbol)
 	writeJSON(w, depthResponse{Venue: venue, Symbol: symbol, Bids: bids, Asks: asks, Found: ok})
+}
+
+// priceHistory returns the last ~3 minutes of per-venue BTC prices from
+// ClickHouse, so the dashboard's price chart loads already populated.
+func (h *handler) priceHistory(w http.ResponseWriter, r *http.Request) {
+	pts, err := h.store.BTCPriceHistory(r.Context(), 180, 2)
+	if err != nil {
+		h.fail(w, "price history", err)
+		return
+	}
+	writeJSON(w, map[string]any{"points": pts})
 }
 
 func (h *handler) fail(w http.ResponseWriter, what string, err error) {
