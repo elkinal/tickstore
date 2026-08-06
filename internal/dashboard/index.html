@@ -114,10 +114,14 @@
 
   /* Order book ladder */
   .sel { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 11px; border-bottom: 1px solid var(--line); flex: none; }
-  .sel button { font: inherit; font-size: 10px; color: var(--dim); background: transparent;
+  .sel button, .rsel button { font: inherit; font-size: 10px; color: var(--dim); background: transparent;
     border: 1px solid var(--line); border-radius: 5px; padding: 3px 7px; cursor: pointer; }
-  .sel button:hover { color: var(--text); border-color: var(--muted); }
-  .sel button.on { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+  .sel button:hover, .rsel button:hover { color: var(--text); border-color: var(--muted); }
+  .sel button.on, .rsel button.on { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+  /* Range selector row: a chip on the left names it, buttons follow. No border
+     so it reads as a sub-row of the chart, not a separate section. */
+  .rsel { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 7px 11px 2px; flex: none; }
+  .rsel::before { content: "range"; color: var(--muted); font-size: 9.5px; letter-spacing: .4px; text-transform: uppercase; margin-right: 3px; }
   .lrow { position: relative; display: grid; grid-template-columns: 1fr 1fr; padding: 1.5px 13px; z-index: 0; }
   .lrow .bar { position: absolute; top: 1px; bottom: 1px; right: 0; z-index: -1; border-radius: 1px; }
   .lrow.ask .bar { background: var(--sell-bg); } .lrow.bid .bar { background: var(--buy-bg); }
@@ -224,8 +228,9 @@
   </div>
 
   <div class="panel chart-panel">
-    <div class="ph"><span class="t" id="chartTitle">Cross-venue price</span><span class="n">last 3 min · live</span></div>
+    <div class="ph"><span class="t" id="chartTitle">Cross-venue price</span><span class="n" id="priceNote">last 3 min · live</span></div>
     <div class="sel" id="chartSel"></div>
+    <div class="rsel" id="priceRange"></div>
     <div class="chartwrap"><svg id="priceChart" class="pc" viewBox="0 0 1000 240"></svg></div>
     <div class="legend" id="chartLegend"></div>
   </div>
@@ -233,7 +238,8 @@
 
   <div class="tabpane" id="tab-tech" hidden>
   <div class="panel chart-panel">
-    <div class="ph"><span class="t" id="basisTitle">Cross-venue spread</span><span class="n">max − min · same-currency venues · live</span></div>
+    <div class="ph"><span class="t" id="basisTitle">Cross-venue spread</span><span class="n">max − min · same-currency venues</span></div>
+    <div class="rsel" id="basisRange"></div>
     <div class="chartwrap"><svg id="basisChart" class="pc" viewBox="0 0 1000 240"></svg></div>
     <div class="legend" id="basisLegend"></div>
   </div>
@@ -241,6 +247,7 @@
   <div class="panel chart-panel">
     <div class="ph"><span class="t">Ingest latency</span><span class="n">exchange → stored · ms</span></div>
     <div class="sel" id="latSel"></div>
+    <div class="rsel" id="latRange"></div>
     <div class="chartwrap"><svg id="latChart" class="pc" viewBox="0 0 1000 240"></svg></div>
     <div class="legend" id="latLegend"></div>
   </div>
@@ -248,6 +255,7 @@
   <div class="panel chart-panel">
     <div class="ph"><span class="t">Ingest throughput</span><span class="n">rows / sec · per venue</span></div>
     <div class="sel" id="rateSel"></div>
+    <div class="rsel" id="rateRange"></div>
     <div class="chartwrap"><svg id="rateChart" class="pc" viewBox="0 0 1000 240"></svg></div>
     <div class="legend" id="rateLegend"></div>
   </div>
@@ -451,6 +459,33 @@ const rateHist = { trades: { coinbase: [], kraken: [], okx: [] }, book: { coinba
 let chartAsset = "BTC";  // BTC/ETH selector, shared by the price + spread charts
 let latMetric = "p50";   // p50/p99 selector for the latency chart
 let rateSource = "trades"; // trades/book selector for the throughput chart
+
+// Time-range selector, shared by all four charts. "3m" is the live view driven
+// by the SSE stream; the longer ranges are fetched from /api/history (backed by
+// per-minute rollups) and refreshed on a timer. bucketMs sets the stale/label
+// scale in drawChart; refreshMs paces the re-fetch.
+const RANGES = {
+  "3m":  { sec: 180,   bucketMs: 3000,   live: true },
+  "1h":  { sec: 3600,  bucketMs: 60000,  refreshMs: 10000 },
+  "6h":  { sec: 21600, bucketMs: 300000, refreshMs: 30000 },
+  "24h": { sec: 86400, bucketMs: 900000, refreshMs: 60000 },
+};
+const RANGE_KEYS = ["3m", "1h", "6h", "24h"];
+const RANGE_NOTE = { "3m": "last 3 min · live", "1h": "last hour", "6h": "last 6 hours", "24h": "last 24 hours" };
+let chartRange = "3m";
+let rangeTimer = null;
+// Ranged buffers, filled from /api/history — same shapes as the live stores so
+// the render functions can read either depending on the current range.
+const rgPrice = { BTC: { coinbase: [], kraken: [], okx: [] }, ETH: { coinbase: [], kraken: [], okx: [] } };
+const rgBasis = { BTC: [], ETH: [] };
+const rgLat = { p50: { coinbase: [], kraken: [], okx: [] }, p99: { coinbase: [], kraken: [], okx: [] } };
+const rgRate = { trades: { coinbase: [], kraken: [], okx: [] }, book: { coinbase: [], kraken: [], okx: [] } };
+const isLive = () => chartRange === "3m";
+// Extra drawChart config for the current range: window width and stale cutoff.
+function rangeCfg(){
+  const r = RANGES[chartRange];
+  return { windowMs: r.sec * 1000, staleMs: Math.max(STALE_MS, 3 * r.bucketMs) };
+}
 const hoverX = {};       // hoverX[svgId] = cursor x in viewBox units, per chart
 
 function fmtPrice(p){ return p >= 1000 ? Math.round(p).toLocaleString("en-US") : p.toFixed(2); }
@@ -481,7 +516,8 @@ function drawChart(svgId, cfg){
     for(const pt of s.pts){ if(pt.p<pMin)pMin=pt.p; if(pt.p>pMax)pMax=pt.p; any=true; }
   }
   if(!any){ svg.innerHTML=""; return; }
-  const tMax = now, tMin = Math.min(Math.max(now - CHART_WINDOW_MS, tOldest), now - 1000);
+  const windowMs = cfg.windowMs || CHART_WINDOW_MS, staleMs = cfg.staleMs || STALE_MS;
+  const tMax = now, tMin = Math.min(Math.max(now - windowMs, tOldest), now - 1000);
   if(pMin===pMax){ pMin-=1; pMax+=1; }
   const gp=(pMax-pMin)*0.12 || 1;
   if(cfg.zeroFloor && pMin >= 0){ pMin = 0; pMax += gp; }
@@ -495,11 +531,14 @@ function drawChart(svgId, cfg){
     h += `<line class="pc-grid" x1="${padL}" y1="${y.toFixed(1)}" x2="${W-padR}" y2="${y.toFixed(1)}"/>`;
     h += `<text class="pc-lbl" x="6" y="${(y+3.5).toFixed(1)}">${cfg.fmtLbl(p)}</text>`;
   }
-  // X-axis: a few time ticks (mm:ss UTC) so the horizontal position is readable.
+  // X-axis time ticks (UTC). Short windows read mm:ss; hour-plus windows read
+  // HH:MM so a whole day's ticks stay distinct.
+  const hhmm = windowMs >= 2*3600*1000;
   for(let i=0;i<=3;i++){
     const f = i/3, tx = padL + f*(W-padL-padR), tt = tMin + f*(tMax-tMin), d = new Date(tt);
     const anchor = i===0 ? "start" : (i===3 ? "end" : "middle");
-    h += `<text class="pc-xlbl" x="${tx.toFixed(1)}" y="${(H-6).toFixed(1)}" text-anchor="${anchor}">${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}</text>`;
+    const lbl = hhmm ? `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}` : `${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+    h += `<text class="pc-xlbl" x="${tx.toFixed(1)}" y="${(H-6).toFixed(1)}" text-anchor="${anchor}">${lbl}</text>`;
   }
   for(const s of cfg.series){
     const pts = s.pts; if(!pts.length) continue;
@@ -552,25 +591,26 @@ function renderLegendEl(elId, series, fmt){
 
 function venueSeries(store){ return VENUES.map(v => ({ name: v, color: VENUE_COLOR[v], pts: (store[v] || []) })); }
 function renderPrice(){
-  const series = venueSeries(priceHist[chartAsset] || {});
-  drawChart("priceChart", { series, fmtLbl: fmtPrice, fmtVal: fmtPrice });
+  const series = venueSeries((isLive() ? priceHist : rgPrice)[chartAsset] || {});
+  drawChart("priceChart", { series, fmtLbl: fmtPrice, fmtVal: fmtPrice, ...rangeCfg() });
   renderLegendEl("chartLegend", series, fmtPrice);
 }
 function renderBasis(){
-  const series = [{ name: "spread", color: "var(--accent)", pts: basisHist[chartAsset] || [] }];
-  drawChart("basisChart", { series, zeroFloor: true, fmtLbl: fmtUsd, fmtVal: fmtUsd });
+  const series = [{ name: "spread", color: "var(--accent)", pts: (isLive() ? basisHist : rgBasis)[chartAsset] || [] }];
+  drawChart("basisChart", { series, zeroFloor: true, fmtLbl: fmtUsd, fmtVal: fmtUsd, ...rangeCfg() });
   renderLegendEl("basisLegend", series, fmtUsd);
 }
 function renderLatency(){
-  const series = venueSeries(latHist[latMetric] || {});
-  drawChart("latChart", { series, zeroFloor: true, fmtLbl: p => Math.round(p) + " ms", fmtVal: fmtMs });
+  const series = venueSeries((isLive() ? latHist : rgLat)[latMetric] || {});
+  drawChart("latChart", { series, zeroFloor: true, fmtLbl: p => Math.round(p) + " ms", fmtVal: fmtMs, ...rangeCfg() });
   renderLegendEl("latLegend", series, fmtMs);
 }
 function renderThroughput(){
-  const series = venueSeries(rateHist[rateSource] || {});
-  drawChart("rateChart", { series, zeroFloor: true, fmtLbl: p => Math.round(p) + "/s", fmtVal: fmtRate });
+  const series = venueSeries((isLive() ? rateHist : rgRate)[rateSource] || {});
+  drawChart("rateChart", { series, zeroFloor: true, fmtLbl: p => Math.round(p) + "/s", fmtVal: fmtRate, ...rangeCfg() });
   renderLegendEl("rateLegend", series, fmtRate);
 }
+function renderTechnical(){ renderPrice(); renderBasis(); renderLatency(); renderThroughput(); }
 
 // buildSel populates a .sel toggle once and wires each button to onPick.
 function buildSel(hostId, opts, cur, onPick){
@@ -583,6 +623,80 @@ function buildSel(hostId, opts, cur, onPick){
 function setAssetTitles(){
   $("chartTitle").textContent = chartAsset + " · cross-venue price";
   $("basisTitle").textContent = chartAsset + " · " + REF_QUOTE + " venue spread";
+}
+
+// ---------- ranged (non-live) data ----------
+// The range selectors on all four charts are synced to one chartRange. "3m" is
+// the live view (SSE); the longer ranges fetch a full window from /api/history
+// and refresh on a timer.
+const RANGE_HOSTS = ["priceRange", "basisRange", "latRange", "rateRange"];
+function markRangeSels(){
+  for(const id of RANGE_HOSTS){ const h=$(id); if(!h) continue; for(const b of h.children) b.classList.toggle("on", b.dataset.r===chartRange); }
+  const pn = $("priceNote"); if(pn) pn.textContent = RANGE_NOTE[chartRange];
+}
+function buildRangeSels(){
+  for(const id of RANGE_HOSTS){
+    const h = $(id); if(!h || h.children.length) continue;
+    h.innerHTML = RANGE_KEYS.map(k => `<button data-r="${k}">${k}</button>`).join("");
+    for(const b of h.children) b.onclick = () => setRange(b.dataset.r);
+  }
+  markRangeSels();
+}
+function setRange(r){
+  if(!RANGES[r] || r === chartRange) return;
+  chartRange = r;
+  markRangeSels();
+  if(rangeTimer){ clearInterval(rangeTimer); rangeTimer = null; }
+  for(const k in hoverX) hoverX[k] = null; // drop any lingering crosshair
+  if(isLive()){
+    renderTechnical(); // live stores are kept current by the SSE handlers
+  } else {
+    fetchRanged();
+    rangeTimer = setInterval(fetchRanged, RANGES[r].refreshMs);
+  }
+}
+
+async function fetchRanged(){
+  const range = chartRange;
+  try {
+    const res = await fetch("/api/history?range=" + range); if(!res.ok) return;
+    const d = await res.json();
+    if(chartRange !== range) return; // range changed mid-flight; drop stale response
+    buildRangedPrice(d.price || []);
+    buildRangedLatency(d.latency || []);
+    buildRangedThroughput(d.throughput || []);
+    renderTechnical();
+  } catch(e){}
+}
+function buildRangedPrice(pts){
+  for(const a of CHART_ASSETS) for(const v of VENUES) rgPrice[a][v] = [];
+  for(const pt of pts){
+    const a = rgPrice[pt.base]; if(!a) continue; const arr = a[pt.venue]; if(!arr) continue;
+    venueQuote[pt.base + "|" + pt.venue] = pt.quote;
+    arr.push({ t: pt.t_ms, p: pt.price });
+  }
+  for(const a of CHART_ASSETS) for(const v of VENUES) rgPrice[a][v].sort((x,y)=>x.t-y.t);
+  for(const a of CHART_ASSETS){
+    const byT = new Map();
+    for(const v of VENUES){
+      if(venueQuote[a + "|" + v] !== REF_QUOTE) continue;
+      for(const pt of rgPrice[a][v]){ if(!byT.has(pt.t)) byT.set(pt.t, []); byT.get(pt.t).push(pt.p); }
+    }
+    const arr = [];
+    for(const t of [...byT.keys()].sort((x,y)=>x-y)){ const vals = byT.get(t); if(vals.length >= 2) arr.push({ t, p: Math.max(...vals) - Math.min(...vals) }); }
+    rgBasis[a] = arr;
+  }
+}
+function buildRangedLatency(pts){
+  for(const m of ["p50","p99"]) for(const v of VENUES) rgLat[m][v] = [];
+  for(const pt of pts){ if(!rgLat.p50[pt.venue]) continue; rgLat.p50[pt.venue].push({ t: pt.t_ms, p: pt.p50 }); rgLat.p99[pt.venue].push({ t: pt.t_ms, p: pt.p99 }); }
+  for(const m of ["p50","p99"]) for(const v of VENUES) rgLat[m][v].sort((x,y)=>x.t-y.t);
+}
+function buildRangedThroughput(pts){
+  for(const s of ["trades","book"]) for(const v of VENUES) rgRate[s][v] = [];
+  let maxT = 0; for(const pt of pts) if(pt.t_ms > maxT) maxT = pt.t_ms;
+  for(const pt of pts){ if(pt.t_ms === maxT) continue; const src = rgRate[pt.source]; if(!src) continue; const arr = src[pt.venue]; if(arr) arr.push({ t: pt.t_ms, p: pt.rate }); }
+  for(const s of ["trades","book"]) for(const v of VENUES) rgRate[s][v].sort((x,y)=>x.t-y.t);
 }
 
 function recordPrices(quotes){
@@ -611,7 +725,7 @@ function recordPrices(quotes){
         while(bh.length && bh[0].t < cutoff) bh.shift();
       }
     }
-    renderPrice(); renderBasis();
+    if(isLive()){ renderPrice(); renderBasis(); }
   } catch(e){}
 }
 
@@ -625,7 +739,7 @@ function ingestLatency(pts){
     next.p99[pt.venue].push({ t: pt.t_ms, p: pt.p99 });
   }
   latHist.p50 = next.p50; latHist.p99 = next.p99;
-  renderLatency();
+  if(isLive()) renderLatency();
 }
 
 // ingestThroughput rebuilds the per-venue rate windows from the server's points.
@@ -644,7 +758,7 @@ function ingestThroughput(pts){
   // venue's samples by time — otherwise the polyline connects points out of order.
   for(const s of ["trades", "book"]) for(const v of VENUES) next[s][v].sort((x,y)=>x.t-y.t);
   rateHist.trades = next.trades; rateHist.book = next.book;
-  renderThroughput();
+  if(isLive()) renderThroughput();
 }
 
 // Seed price + spread with recent history from ClickHouse so the charts load
@@ -681,6 +795,7 @@ buildSel("chartSel", CHART_ASSETS, () => chartAsset, a => {
 });
 buildSel("latSel", ["p50", "p99"], () => latMetric, m => { latMetric = m; hoverX.latChart = null; renderLatency(); });
 buildSel("rateSel", ["trades", "book"], () => rateSource, s => { rateSource = s; hoverX.rateChart = null; renderThroughput(); });
+buildRangeSels();
 setAssetTitles();
 
 // Top-level tabs: keep the market view (quotes, book, tape, price) separate from

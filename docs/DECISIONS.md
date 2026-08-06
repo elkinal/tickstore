@@ -618,3 +618,48 @@ persistence is enabled; the live views don't require `persist_books`.
 **Revisit.** If we want historical replay ("show me the book at 14:32:05"), that
 comes from `book_updates` on a separate view, not this registry. Sparklines for
 rate/latency would want a small in-process time series too.
+
+## D23 — Chart ranges: per-minute rollup materialized views, raw for live
+*2026-08-06*
+
+**Decision.** The dashboard charts (price, spread, latency, throughput) offer
+time ranges — live 3 min, 1h, 6h, 24h — served two ways. The live 3-minute view
+is driven by the SSE stream as before. The longer ranges are fetched from a new
+`/api/history?range=` endpoint and refreshed on a timer (10s/30s/60s). Ranges
+whose bucket is a minute or more read two per-minute materialized views instead
+of the raw tables:
+
+- `trades_1m` (AggregatingMergeTree): `argMaxState(price)` (last price),
+  `quantilesState(0.5,0.99)(latency)`, and `countState()`, keyed by
+  (venue, symbol, minute).
+- `book_1m` (SummingMergeTree): book-update `count()` per (venue, minute).
+
+A coarser bucket merges the minute states (`argMaxMerge`, `quantilesMerge`,
+`sum`). The query layer picks raw vs rollup off the bucket size
+(`rollup(bucketSec) = bucketSec >= 60`). The views are created by `schema.sql`
+(so they deploy automatically) and seeded once with a guarded 25-hour backfill in
+`Migrate`, since a materialized view only sees rows inserted after it exists.
+
+**Why.**
+- *The book feed is the firehose.* A raw 24h throughput/latency query over
+  `book_updates` scans tens of millions of rows; a week would be hundreds of
+  millions. Pre-aggregating on insert makes any range O(minutes-in-range).
+- *Raw stays best for the live view.* Sub-minute buckets need per-second
+  resolution the 1-minute rollup can't give, and 3 minutes of raw data is tiny.
+- *One endpoint, one refresh.* `/api/history` returns all three technical series
+  for a range in a single response, so a range change is one fetch, not three.
+
+**Cost.**
+- The rollups add write amplification (two MV inserts per source insert) and
+  storage, bounded by their TTLs (trades_1m 90d, book_1m 30d) — small, since a
+  minute collapses to one row per (venue, symbol).
+- A pathological latency outlier is clamped out via a nullable `if(...)` inside
+  the quantile state rather than a row filter, so it can't drop the trade from
+  the count/last-price aggregates; behaviour matches the raw path's `WHERE`.
+- Backfill guards on the view holding data older than 10 minutes, so a
+  freshly-created view still gets seeded but an existing one is never
+  double-counted; it excludes the last 2 minutes (the live view's territory).
+
+**Revisit.** A 7-day range would want a second, coarser rollup (or an hourly
+one), and would be limited by the 30-day book TTL. If refresh-on-timer proves
+chatty, the longer ranges could ride the SSE stream at a slow cadence instead.

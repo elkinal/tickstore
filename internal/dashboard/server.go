@@ -66,6 +66,7 @@ func Serve(ctx context.Context, addr string, store Store, reg Live, log *slog.Lo
 	mux.HandleFunc("/api/book", h.book)
 	mux.HandleFunc("/api/depth", h.depth)
 	mux.HandleFunc("/api/pricehistory", h.priceHistory)
+	mux.HandleFunc("/api/history", h.history)
 	srv := &http.Server{Addr: addr, Handler: mux}
 
 	go func() {
@@ -238,6 +239,49 @@ func (h *handler) priceHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"points": pts})
+}
+
+// rangeBuckets maps a chart range key to its (window seconds, bucket seconds).
+// Sub-minute buckets read the raw tables; minute-plus buckets read the rollups.
+var rangeBuckets = map[string][2]int{
+	"3m":  {180, 3},
+	"1h":  {3600, 60},
+	"6h":  {21600, 300},
+	"24h": {86400, 900},
+}
+
+// history serves a whole range of all three technical series (price, latency,
+// throughput) in one response, so switching the chart range is a single fetch.
+// The live 3-minute view is driven by the SSE stream instead; this backs the
+// longer ranges (and refreshes them on a timer).
+func (h *handler) history(w http.ResponseWriter, r *http.Request) {
+	rb, ok := rangeBuckets[r.URL.Query().Get("range")]
+	if !ok {
+		rb = rangeBuckets["1h"]
+	}
+	windowSec, bucketSec := rb[0], rb[1]
+	ctx := r.Context()
+	price, err := h.store.PriceHistory(ctx, windowSec, bucketSec)
+	if err != nil {
+		h.fail(w, "history price", err)
+		return
+	}
+	lat, err := h.store.LatencyHistory(ctx, windowSec, bucketSec)
+	if err != nil {
+		h.fail(w, "history latency", err)
+		return
+	}
+	rate, err := h.store.ThroughputHistory(ctx, windowSec, bucketSec)
+	if err != nil {
+		h.fail(w, "history throughput", err)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"price":      price,
+		"latency":    lat,
+		"throughput": rate,
+		"bucket_ms":  bucketSec * 1000,
+	})
 }
 
 func (h *handler) fail(w http.ResponseWriter, what string, err error) {

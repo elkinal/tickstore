@@ -176,13 +176,19 @@ type PricePoint struct {
 	Price float64 `json:"price"`
 }
 
+// rollup reports whether a chart range should read the per-minute materialized
+// views instead of the raw tables. Buckets of a minute or more (the 1h/6h/24h
+// ranges) use the rollups; the sub-minute live view reads raw. See DECISIONS.md.
+func rollup(bucketSec int) bool { return bucketSec >= 60 }
+
 // PriceHistory returns the last-trade price per venue and asset (BTC and ETH)
-// over the last windowSec seconds, bucketed to bucketSec. It seeds the
-// dashboard's price chart so the page loads with a full line instead of drawing
-// from empty. Symbols are listed explicitly because each venue names them
-// differently (BTC-USD, BTC/USD, BTC-USDT, and the ETH equivalents).
+// over the last windowSec seconds, bucketed to bucketSec. It backs both the
+// live price chart and its longer ranges: sub-minute buckets read raw trades,
+// while minute-plus buckets merge the trades_1m rollup's argMax states (the last
+// price in each coarse bucket). Symbols are listed explicitly because each venue
+// names them differently (BTC-USD, BTC/USD, BTC-USDT, and the ETH equivalents).
 func (c *ClickHouse) PriceHistory(ctx context.Context, windowSec, bucketSec int) ([]PricePoint, error) {
-	const q = `
+	const raw = `
 		SELECT venue,
 		       multiIf(startsWith(symbol, 'BTC'), 'BTC', startsWith(symbol, 'ETH'), 'ETH', 'OTHER') AS base,
 		       if(endsWith(symbol, 'USDT'), 'USDT', 'USD') AS quote,
@@ -193,6 +199,21 @@ func (c *ClickHouse) PriceHistory(ctx context.Context, windowSec, bucketSec int)
 		  AND ts_received > now() - toIntervalSecond(?)
 		GROUP BY venue, base, quote, t_ms
 		ORDER BY t_ms`
+	const mv = `
+		SELECT venue,
+		       multiIf(startsWith(symbol, 'BTC'), 'BTC', startsWith(symbol, 'ETH'), 'ETH', 'OTHER') AS base,
+		       if(endsWith(symbol, 'USDT'), 'USDT', 'USD') AS quote,
+		       toUInt64(toUnixTimestamp(toStartOfInterval(minute, toIntervalSecond(?)))) * 1000 AS t_ms,
+		       argMaxMerge(close_state) / 1e8 AS price
+		FROM tickstore.trades_1m
+		WHERE symbol IN ('BTC-USD', 'BTC/USD', 'BTC-USDT', 'ETH-USD', 'ETH/USD', 'ETH-USDT')
+		  AND minute > now() - toIntervalSecond(?)
+		GROUP BY venue, base, quote, t_ms
+		ORDER BY t_ms`
+	q := raw
+	if rollup(bucketSec) {
+		q = mv
+	}
 	rows, err := c.conn.Query(ctx, q, bucketSec, windowSec)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: price history: %w", err)
@@ -228,11 +249,10 @@ type LatencyPoint struct {
 // diff is clamped to a sane range so a venue with a missing/garbage exchange
 // timestamp can't distort the scale.
 func (c *ClickHouse) LatencyHistory(ctx context.Context, windowSec, bucketSec int) ([]LatencyPoint, error) {
-	const q = `
+	const raw = `
 		SELECT venue,
 		       toUInt64(toUnixTimestamp(toStartOfInterval(ts_received, toIntervalSecond(?)))) * 1000 AS t_ms,
-		       quantile(0.5)(lat_ms)  AS p50,
-		       quantile(0.99)(lat_ms) AS p99
+		       quantiles(0.5, 0.99)(lat_ms) AS q
 		FROM (
 			SELECT venue, ts_received,
 			       (toUnixTimestamp64Nano(ts_received) - toUnixTimestamp64Nano(ts_exchange)) / 1e6 AS lat_ms
@@ -242,6 +262,18 @@ func (c *ClickHouse) LatencyHistory(ctx context.Context, windowSec, bucketSec in
 		WHERE lat_ms >= 0 AND lat_ms < 60000
 		GROUP BY venue, t_ms
 		ORDER BY t_ms`
+	const mv = `
+		SELECT venue,
+		       toUInt64(toUnixTimestamp(toStartOfInterval(minute, toIntervalSecond(?)))) * 1000 AS t_ms,
+		       quantilesMerge(0.5, 0.99)(lat_state) AS q
+		FROM tickstore.trades_1m
+		WHERE minute > now() - toIntervalSecond(?)
+		GROUP BY venue, t_ms
+		ORDER BY t_ms`
+	q := raw
+	if rollup(bucketSec) {
+		q = mv
+	}
 	rows, err := c.conn.Query(ctx, q, bucketSec, windowSec)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: latency history: %w", err)
@@ -252,9 +284,13 @@ func (c *ClickHouse) LatencyHistory(ctx context.Context, windowSec, bucketSec in
 	for rows.Next() {
 		var venue string
 		var tms uint64
-		var p50, p99 float64
-		if err := rows.Scan(&venue, &tms, &p50, &p99); err != nil {
+		var qs []float64
+		if err := rows.Scan(&venue, &tms, &qs); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan latency point: %w", err)
+		}
+		var p50, p99 float64
+		if len(qs) == 2 {
+			p50, p99 = qs[0], qs[1]
 		}
 		out = append(out, LatencyPoint{Venue: venue, TMs: int64(tms), P50: p50, P99: p99})
 	}
@@ -276,7 +312,7 @@ type RatePoint struct {
 // the "how much" counterpart to the latency chart's "how fast" — and makes the
 // order-book firehose (many times the trade volume) visible.
 func (c *ClickHouse) ThroughputHistory(ctx context.Context, windowSec, bucketSec int) ([]RatePoint, error) {
-	const q = `
+	const raw = `
 		SELECT venue, 'trades' AS source,
 		       toUInt64(toUnixTimestamp(toStartOfInterval(ts_received, toIntervalSecond(?)))) * 1000 AS t_ms,
 		       count() / ? AS rate
@@ -291,6 +327,25 @@ func (c *ClickHouse) ThroughputHistory(ctx context.Context, windowSec, bucketSec
 		WHERE ts_received > now() - toIntervalSecond(?)
 		GROUP BY venue, t_ms
 		ORDER BY t_ms`
+	const mv = `
+		SELECT venue, 'trades' AS source,
+		       toUInt64(toUnixTimestamp(toStartOfInterval(minute, toIntervalSecond(?)))) * 1000 AS t_ms,
+		       sum(countMerge(cnt_state)) / ? AS rate
+		FROM tickstore.trades_1m
+		WHERE minute > now() - toIntervalSecond(?)
+		GROUP BY venue, t_ms
+		UNION ALL
+		SELECT venue, 'book' AS source,
+		       toUInt64(toUnixTimestamp(toStartOfInterval(minute, toIntervalSecond(?)))) * 1000 AS t_ms,
+		       sum(cnt) / ? AS rate
+		FROM tickstore.book_1m
+		WHERE minute > now() - toIntervalSecond(?)
+		GROUP BY venue, t_ms
+		ORDER BY t_ms`
+	q := raw
+	if rollup(bucketSec) {
+		q = mv
+	}
 	rows, err := c.conn.Query(ctx, q, bucketSec, bucketSec, windowSec, bucketSec, bucketSec, windowSec)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: throughput history: %w", err)

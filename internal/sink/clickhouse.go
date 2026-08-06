@@ -71,6 +71,56 @@ func (c *ClickHouse) Migrate(ctx context.Context) error {
 			return fmt.Errorf("clickhouse: migrate: %w", err)
 		}
 	}
+	return c.backfillRollups(ctx)
+}
+
+// backfillRollups seeds the per-minute rollup views with the last ~25 hours of
+// existing data the first time they're created — materialized views only see
+// rows inserted after creation, so without this the 24h chart ranges would be
+// empty until a full day had elapsed. It's guarded on the view being empty, so
+// it runs once (on the deploy that adds the views) and is a no-op thereafter.
+// Aggregation memory is bounded by the tiny number of (venue, symbol, minute)
+// groups, not the rows scanned, so this is cheap despite the book volume.
+func (c *ClickHouse) backfillRollups(ctx context.Context) error {
+	// Backfill everything older than 2 minutes; the live view already covers the
+	// last couple of minutes, so this avoids re-counting rows into those buckets.
+	backfills := []struct{ table, insert string }{
+		{"tickstore.trades_1m", `
+			INSERT INTO tickstore.trades_1m
+			SELECT venue, symbol, toStartOfMinute(ts_received) AS minute,
+			       argMaxState(price, ts_received),
+			       quantilesState(0.5, 0.99)(if(lat_ms >= 0 AND lat_ms < 60000, lat_ms, NULL)),
+			       countState()
+			FROM (
+				SELECT venue, symbol, ts_received, price,
+				       (toUnixTimestamp64Nano(ts_received) - toUnixTimestamp64Nano(ts_exchange)) / 1e6 AS lat_ms
+				FROM tickstore.trades
+				WHERE ts_received > now() - INTERVAL 25 HOUR AND ts_received < now() - INTERVAL 2 MINUTE
+			)
+			GROUP BY venue, symbol, minute`},
+		{"tickstore.book_1m", `
+			INSERT INTO tickstore.book_1m
+			SELECT venue, toStartOfMinute(ts_received) AS minute, count()
+			FROM tickstore.book_updates
+			WHERE ts_received > now() - INTERVAL 25 HOUR AND ts_received < now() - INTERVAL 2 MINUTE
+			GROUP BY venue, minute`},
+	}
+	for _, b := range backfills {
+		// Guard on data OLDER than the live view could have produced since it was
+		// created, so a freshly-created view (holding only the last few seconds of
+		// live rows) still gets backfilled, but an existing one is left alone.
+		var n uint64
+		q := "SELECT count() FROM " + b.table + " WHERE minute < now() - INTERVAL 10 MINUTE"
+		if err := c.conn.QueryRow(ctx, q).Scan(&n); err != nil {
+			return fmt.Errorf("clickhouse: rollup check %s: %w", b.table, err)
+		}
+		if n > 0 {
+			continue // already backfilled on an earlier startup
+		}
+		if err := c.conn.Exec(ctx, b.insert); err != nil {
+			return fmt.Errorf("clickhouse: backfill %s: %w", b.table, err)
+		}
+	}
 	return nil
 }
 
