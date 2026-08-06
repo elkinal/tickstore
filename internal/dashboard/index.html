@@ -139,19 +139,18 @@
     .trow { grid-template-columns: 54px 66px 40px 1fr auto; }
     .trow .sym { display: none; }
   }
-  /* BTC cross-venue price chart */
+  /* Cross-venue charts (price, spread, latency all share .pc) */
   .chart-panel { margin-top: 12px; }
   .chartwrap { padding: 8px 10px 2px; }
-  #priceChart { width: 100%; height: auto; display: block; }
-  #priceChart .pc-grid { stroke: var(--line2); stroke-width: 1; }
-  #priceChart .pc-lbl { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .pc { width: 100%; height: auto; display: block; cursor: crosshair; }
+  .pc .pc-grid { stroke: var(--line2); stroke-width: 1; }
+  .pc .pc-lbl { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .pc .pc-cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
   .legend { display: flex; flex-wrap: wrap; gap: 18px; padding: 4px 14px 12px; font-size: 12px; }
   .legend .lg { display: inline-flex; align-items: center; gap: 7px; }
   .legend .sw { width: 12px; height: 3px; border-radius: 2px; }
   .legend .lv { color: var(--dim); }
   .legend .lp { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
-  #priceChart { cursor: crosshair; }
-  #priceChart .pc-cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
   .charttip { position: fixed; z-index: 60; pointer-events: none; display: none;
     background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
     padding: 6px 9px; font-size: 11.5px; box-shadow: 0 6px 18px rgba(0,0,0,.45);
@@ -162,6 +161,13 @@
   .charttip .tt-sw { width: 10px; height: 3px; border-radius: 2px; }
   .charttip .tt-v { color: var(--dim); }
   .charttip .tt-p { color: var(--text); font-weight: 600; margin-left: 14px; }
+  /* On phones the wide viewBox scales down hard, so bump SVG-space font sizes
+     (they scale with width) to keep axis labels legible. */
+  @media (max-width: 820px) {
+    .pc .pc-lbl { font-size: 16px; }
+    .legend { gap: 11px 14px; font-size: 12px; padding: 4px 12px 12px; }
+    .chart-panel .sel { padding: 7px 12px; }
+  }
 </style>
 </head>
 <body>
@@ -198,10 +204,24 @@
   <div class="panel chart-panel">
     <div class="ph"><span class="t" id="chartTitle">Cross-venue price</span><span class="n">last 3 min · live</span></div>
     <div class="sel" id="chartSel"></div>
-    <div class="chartwrap"><svg id="priceChart" viewBox="0 0 1000 240"></svg></div>
+    <div class="chartwrap"><svg id="priceChart" class="pc" viewBox="0 0 1000 240"></svg></div>
     <div class="legend" id="chartLegend"></div>
-    <div class="charttip" id="chartTip"></div>
   </div>
+
+  <div class="panel chart-panel">
+    <div class="ph"><span class="t" id="basisTitle">Cross-venue spread</span><span class="n">max − min across venues · live</span></div>
+    <div class="chartwrap"><svg id="basisChart" class="pc" viewBox="0 0 1000 240"></svg></div>
+    <div class="legend" id="basisLegend"></div>
+  </div>
+
+  <div class="panel chart-panel">
+    <div class="ph"><span class="t">Ingest latency</span><span class="n">exchange → stored · ms</span></div>
+    <div class="sel" id="latSel"></div>
+    <div class="chartwrap"><svg id="latChart" class="pc" viewBox="0 0 1000 240"></svg></div>
+    <div class="legend" id="latLegend"></div>
+  </div>
+
+  <div class="charttip" id="chartTip"></div>
 </div>
 
 <script>
@@ -366,35 +386,145 @@ function renderStats(s){
 // One Server-Sent Events connection replaces all polling: the server pushes a
 // snapshot ~2×/second and the browser just renders it. EventSource reconnects
 // on its own if the connection drops.
-// ---------- cross-venue price chart ----------
-// Accumulates a rolling window of each venue's last price per asset from the
-// quotes already arriving over SSE (no server change needed) and draws it as
-// three lines. An asset selector (BTC / ETH) picks which one is shown.
+// ---------- cross-venue charts ----------
+// Three small time-series charts share one renderer (drawChart): last price per
+// venue, the spread between venues, and ingest latency per venue. Price/spread
+// build live from the SSE quotes; latency comes from ClickHouse percentiles that
+// ride along on the same stream. Each keeps a rolling 3-minute window and always
+// spans the full width.
 const CHART_WINDOW_MS = 3 * 60 * 1000;
-const CHART_SERIES = [
-  { venue: "coinbase", color: "#3a91c9" }, // validated CVD-safe categorical trio
-  { venue: "kraken",   color: "#bd6b9a" },
-  { venue: "okx",      color: "#c98216" },
-];
+const VENUE_COLOR = { coinbase: "#3a91c9", kraken: "#bd6b9a", okx: "#c98216" }; // validated CVD-safe trio
+const VENUES = ["coinbase", "kraken", "okx"];
 const CHART_ASSETS = ["BTC", "ETH"];
-// priceHist[asset][venue] = [{t, p}, …]; one rolling window per asset+venue.
-const priceHist = {};
-for(const a of CHART_ASSETS){ priceHist[a] = { coinbase: [], kraken: [], okx: [] }; }
-let chartAsset = "BTC";       // which asset the chart currently shows
-let hoverX = null;            // cursor x in viewBox units while hovering the chart
+// Phones scale the wide viewBox down hard, shrinking SVG-space text with it; a
+// narrower, taller box keeps axis labels and lines legible.
+const IS_MOBILE = matchMedia("(max-width: 820px)").matches;
+const CHART_W = IS_MOBILE ? 560 : 1000, CHART_H = IS_MOBILE ? 300 : 240;
 
-function renderChartSel(){
-  const host = $("chartSel"); if(!host || host.children.length) return;
-  $("chartTitle").textContent = chartAsset + " · cross-venue price";
-  host.innerHTML = CHART_ASSETS.map(a=>`<button data-a="${a}">${a}</button>`).join("");
-  for(const b of host.children) b.onclick = ()=>{
-    chartAsset = b.dataset.a; markChartSel();
-    hoverX = null; $("chartTitle").textContent = chartAsset + " · cross-venue price";
-    renderChart();
-  };
-  markChartSel();
+// Data stores. priceHist[asset][venue] and latHist[metric][venue] hold {t,p}
+// samples; basisHist[asset] holds the derived max−min spread.
+const priceHist = {};
+for(const a of CHART_ASSETS) priceHist[a] = { coinbase: [], kraken: [], okx: [] };
+const basisHist = { BTC: [], ETH: [] };
+const latHist = { p50: { coinbase: [], kraken: [], okx: [] }, p99: { coinbase: [], kraken: [], okx: [] } };
+
+let chartAsset = "BTC";  // BTC/ETH selector, shared by the price + spread charts
+let latMetric = "p50";   // p50/p99 selector for the latency chart
+const hoverX = {};       // hoverX[svgId] = cursor x in viewBox units, per chart
+
+function fmtPrice(p){ return p >= 1000 ? Math.round(p).toLocaleString("en-US") : p.toFixed(2); }
+function fmtUsd(p){ return "$" + (p >= 100 ? Math.round(p).toLocaleString("en-US") : p.toFixed(2)); }
+function fmtMs(p){ return (p >= 100 ? Math.round(p) : p.toFixed(1)) + " ms"; }
+
+function nearest(arr, t){
+  if(!arr || !arr.length) return null;
+  let best=arr[0], bd=Math.abs(arr[0].t-t);
+  for(let i=1;i<arr.length;i++){ const d=Math.abs(arr[i].t-t); if(d<bd){bd=d;best=arr[i];} }
+  return best;
 }
-function markChartSel(){ const h=$("chartSel"); if(h) for(const b of h.children) b.classList.toggle("on", b.dataset.a===chartAsset); }
+
+// drawChart renders one line chart into svgId. cfg.series is [{name,color,pts}];
+// fmtLbl formats y-axis labels and fmtVal formats hover values. zeroFloor pins
+// the y-axis to 0 (right for latency/spread, wrong for price). One renderer keeps
+// all three charts pixel-consistent, including the flat edge-extension so every
+// line spans the full window even when a venue's samples start late.
+function drawChart(svgId, cfg){
+  const svg = $(svgId); if(!svg) return;
+  svg.setAttribute("viewBox", `0 0 ${CHART_W} ${CHART_H}`);
+  const W=CHART_W, H=CHART_H, padT=12, padB=16, padL=cfg.padL||54, padR=10;
+  const now = Date.now();
+  let pMin=Infinity, pMax=-Infinity, tOldest=now, any=false;
+  for(const s of cfg.series){
+    if(s.pts.length) tOldest = Math.min(tOldest, s.pts[0].t);
+    for(const pt of s.pts){ if(pt.p<pMin)pMin=pt.p; if(pt.p>pMax)pMax=pt.p; any=true; }
+  }
+  if(!any){ svg.innerHTML=""; return; }
+  const tMax = now, tMin = Math.min(Math.max(now - CHART_WINDOW_MS, tOldest), now - 1000);
+  if(pMin===pMax){ pMin-=1; pMax+=1; }
+  const gp=(pMax-pMin)*0.12 || 1;
+  if(cfg.zeroFloor && pMin >= 0){ pMin = 0; pMax += gp; }
+  else { pMin -= gp; pMax += gp; }
+  const clampT = t => t < tMin ? tMin : (t > tMax ? tMax : t);
+  const X = t => padL + (clampT(t)-tMin)/(tMax-tMin) * (W-padL-padR);
+  const Y = p => padT + (1-(p-pMin)/(pMax-pMin)) * (H-padT-padB);
+  let h="";
+  for(let i=0;i<=4;i++){
+    const p = pMin+(pMax-pMin)*i/4, y=Y(p);
+    h += `<line class="pc-grid" x1="${padL}" y1="${y.toFixed(1)}" x2="${W-padR}" y2="${y.toFixed(1)}"/>`;
+    h += `<text class="pc-lbl" x="6" y="${(y+3.5).toFixed(1)}">${cfg.fmtLbl(p)}</text>`;
+  }
+  for(const s of cfg.series){
+    const pts = s.pts; if(!pts.length) continue;
+    // Hold the first sample back to tMin and the last forward to tMax so a line
+    // whose data starts/ends mid-window still spans the full width.
+    const first = pts[0], last = pts[pts.length-1];
+    const coords = [`${X(tMin).toFixed(1)},${Y(first.p).toFixed(1)}`];
+    for(const pt of pts) coords.push(`${X(pt.t).toFixed(1)},${Y(pt.p).toFixed(1)}`);
+    coords.push(`${X(tMax).toFixed(1)},${Y(last.p).toFixed(1)}`);
+    h += `<polyline points="${coords.join(" ")}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    h += `<circle cx="${X(tMax).toFixed(1)}" cy="${Y(last.p).toFixed(1)}" r="2.6" fill="${s.color}"/>`;
+  }
+  // Hover crosshair: dashed vertical line, a dot on each series at the nearest
+  // sample, and a tooltip listing exact values.
+  const hx = hoverX[svgId];
+  if(hx != null && hx >= padL && hx <= W-padR){
+    const ht = tMin + (hx-padL)/(W-padL-padR)*(tMax-tMin);
+    h += `<line class="pc-cross" x1="${hx.toFixed(1)}" y1="${padT}" x2="${hx.toFixed(1)}" y2="${(H-padB).toFixed(1)}"/>`;
+    const rows = [];
+    for(const s of cfg.series){
+      const pt = nearest(s.pts, ht); if(!pt) continue;
+      h += `<circle cx="${X(pt.t).toFixed(1)}" cy="${Y(pt.p).toFixed(1)}" r="3.2" fill="${s.color}" stroke="var(--bg)" stroke-width="1.2"/>`;
+      rows.push({ name: s.name, color: s.color, val: cfg.fmtVal(pt.p) });
+    }
+    updateTip(ht, rows);
+  }
+  svg.innerHTML = h;
+}
+function updateTip(t, rows){
+  const el = $("chartTip"); if(!el) return;
+  if(!rows.length){ el.style.display="none"; return; }
+  const d = new Date(t), tm = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} UTC`;
+  el.innerHTML = `<div class="tt-t">${tm}</div>` + rows.map(r =>
+    `<div class="tt-row"><span class="tt-sw" style="background:${r.color}"></span><span class="tt-v">${r.name}</span><span class="tt-p">${r.val}</span></div>`).join("");
+  el.style.display = "block";
+}
+function renderLegendEl(elId, series, fmt){
+  const el = $(elId); if(!el) return;
+  el.innerHTML = series.map(s => {
+    const last = s.pts.length ? fmt(s.pts[s.pts.length-1].p) : "—";
+    return `<span class="lg"><span class="sw" style="background:${s.color}"></span><span class="lv">${s.name}</span> <span class="lp">${last}</span></span>`;
+  }).join("");
+}
+
+function venueSeries(store){ return VENUES.map(v => ({ name: v, color: VENUE_COLOR[v], pts: (store[v] || []) })); }
+function renderPrice(){
+  const series = venueSeries(priceHist[chartAsset] || {});
+  drawChart("priceChart", { series, fmtLbl: fmtPrice, fmtVal: fmtPrice });
+  renderLegendEl("chartLegend", series, fmtPrice);
+}
+function renderBasis(){
+  const series = [{ name: "spread", color: "var(--accent)", pts: basisHist[chartAsset] || [] }];
+  drawChart("basisChart", { series, zeroFloor: true, fmtLbl: fmtUsd, fmtVal: fmtUsd });
+  renderLegendEl("basisLegend", series, fmtUsd);
+}
+function renderLatency(){
+  const series = venueSeries(latHist[latMetric] || {});
+  drawChart("latChart", { series, zeroFloor: true, fmtLbl: p => Math.round(p), fmtVal: fmtMs });
+  renderLegendEl("latLegend", series, fmtMs);
+}
+
+// buildSel populates a .sel toggle once and wires each button to onPick.
+function buildSel(hostId, opts, cur, onPick){
+  const host = $(hostId); if(!host || host.children.length) return;
+  host.innerHTML = opts.map(o => `<button data-v="${o}">${o}</button>`).join("");
+  const mark = () => { for(const b of host.children) b.classList.toggle("on", b.dataset.v === cur()); };
+  for(const b of host.children) b.onclick = () => { onPick(b.dataset.v); mark(); };
+  mark();
+}
+function setAssetTitles(){
+  $("chartTitle").textContent = chartAsset + " · cross-venue price";
+  $("basisTitle").textContent = chartAsset + " · venue spread";
+}
 
 function recordPrices(quotes){
   try {
@@ -406,106 +536,69 @@ function recordPrices(quotes){
       h.push({ t: now, p });
       while(h.length && h[0].t < cutoff) h.shift();
     }
-    renderChart();
+    // Derive the cross-venue spread from the latest price per venue, per asset.
+    for(const a of CHART_ASSETS){
+      const vals = [];
+      for(const v of VENUES){ const arr = priceHist[a][v]; if(arr.length) vals.push(arr[arr.length-1].p); }
+      if(vals.length >= 2){
+        const bh = basisHist[a];
+        bh.push({ t: now, p: Math.max(...vals) - Math.min(...vals) });
+        while(bh.length && bh[0].t < cutoff) bh.shift();
+      }
+    }
+    renderPrice(); renderBasis();
   } catch(e){}
 }
-function fmtPrice(p){ return p >= 1000 ? Math.round(p).toLocaleString("en-US") : p.toFixed(2); }
-function renderChart(){
-  const svg = $("priceChart"); if(!svg) return;
-  renderChartSel();
-  const series = priceHist[chartAsset] || {};
-  const W=1000, H=240, padT=12, padB=16, padL=54, padR=10;
-  const now = Date.now();
-  let pMin=Infinity, pMax=-Infinity, tOldest=now, any=false;
-  for(const s of CHART_SERIES){
-    const pts = series[s.venue] || [];
-    if(pts.length) tOldest = Math.min(tOldest, pts[0].t);
-    for(const pt of pts){ if(pt.p<pMin)pMin=pt.p; if(pt.p>pMax)pMax=pt.p; any=true; }
+
+// ingestLatency rebuilds the latency windows from the server's percentile points
+// (the server is the source of truth for the whole window, so replace wholesale).
+function ingestLatency(pts){
+  const next = { p50: { coinbase: [], kraken: [], okx: [] }, p99: { coinbase: [], kraken: [], okx: [] } };
+  for(const pt of pts){
+    if(!next.p50[pt.venue]) continue;
+    next.p50[pt.venue].push({ t: pt.t_ms, p: pt.p50 });
+    next.p99[pt.venue].push({ t: pt.t_ms, p: pt.p99 });
   }
-  if(!any){ svg.innerHTML=""; renderLegend(); return; }
-  // Span from the oldest point we have (capped at the window) to now, so the
-  // line fills the width immediately and scrolls once it reaches 3 minutes.
-  const tMax = now, tMin = Math.min(Math.max(now - CHART_WINDOW_MS, tOldest), now - 1000);
-  if(pMin===pMax){ pMin-=1; pMax+=1; }
-  const gp=(pMax-pMin)*0.12 || 1; pMin-=gp; pMax+=gp;
-  const clampT = t => t < tMin ? tMin : (t > tMax ? tMax : t);
-  const X = t => padL + (clampT(t)-tMin)/(tMax-tMin) * (W-padL-padR);
-  const Y = p => padT + (1-(p-pMin)/(pMax-pMin)) * (H-padT-padB);
-  let h="";
-  for(let i=0;i<=4;i++){
-    const p = pMin+(pMax-pMin)*i/4, y=Y(p);
-    h += `<line class="pc-grid" x1="${padL}" y1="${y.toFixed(1)}" x2="${W-padR}" y2="${y.toFixed(1)}"/>`;
-    h += `<text class="pc-lbl" x="6" y="${(y+3.5).toFixed(1)}">${fmtPrice(p)}</text>`;
-  }
-  for(const s of CHART_SERIES){
-    const pts = series[s.venue] || []; if(!pts.length) continue;
-    // Extend flat to both edges: a venue whose oldest/newest sample is inside the
-    // window would otherwise start or stop mid-chart. Hold the first price back to
-    // tMin and the last price forward to tMax so every line spans the full width.
-    const first = pts[0], last = pts[pts.length-1];
-    const coords = [`${X(tMin).toFixed(1)},${Y(first.p).toFixed(1)}`];
-    for(const pt of pts) coords.push(`${X(pt.t).toFixed(1)},${Y(pt.p).toFixed(1)}`);
-    coords.push(`${X(tMax).toFixed(1)},${Y(last.p).toFixed(1)}`);
-    h += `<polyline points="${coords.join(" ")}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
-    h += `<circle cx="${X(tMax).toFixed(1)}" cy="${Y(last.p).toFixed(1)}" r="2.6" fill="${s.color}"/>`;
-  }
-  // Hover crosshair: a dashed vertical line at the cursor plus a dot on each
-  // line at the nearest sample, and a tooltip listing the exact prices.
-  if(hoverX !== null && hoverX >= padL && hoverX <= W-padR){
-    const ht = tMin + (hoverX-padL)/(W-padL-padR)*(tMax-tMin);
-    h += `<line class="pc-cross" x1="${hoverX.toFixed(1)}" y1="${padT}" x2="${hoverX.toFixed(1)}" y2="${(H-padB).toFixed(1)}"/>`;
-    const rows = [];
-    for(const s of CHART_SERIES){
-      const pt = nearest(series[s.venue], ht); if(!pt) continue;
-      h += `<circle cx="${X(pt.t).toFixed(1)}" cy="${Y(pt.p).toFixed(1)}" r="3.2" fill="${s.color}" stroke="var(--bg)" stroke-width="1.2"/>`;
-      rows.push({ venue: s.venue, color: s.color, price: pt.p });
-    }
-    updateTip(ht, rows);
-  } else { const tp=$("chartTip"); if(tp) tp.style.display="none"; }
-  svg.innerHTML = h; renderLegend();
-}
-function nearest(arr, t){
-  if(!arr || !arr.length) return null;
-  let best=arr[0], bd=Math.abs(arr[0].t-t);
-  for(let i=1;i<arr.length;i++){ const d=Math.abs(arr[i].t-t); if(d<bd){bd=d;best=arr[i];} }
-  return best;
-}
-function updateTip(t, rows){
-  const el = $("chartTip"); if(!el) return;
-  if(!rows.length){ el.style.display="none"; return; }
-  const d = new Date(t), tm = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} UTC`;
-  el.innerHTML = `<div class="tt-t">${tm}</div>` + rows.map(r =>
-    `<div class="tt-row"><span class="tt-sw" style="background:${r.color}"></span><span class="tt-v">${r.venue}</span><span class="tt-p">${fmtPrice(r.price)}</span></div>`).join("");
-  el.style.display = "block";
-}
-function renderLegend(){
-  const el = $("chartLegend"); if(!el) return;
-  const series = priceHist[chartAsset] || {};
-  el.innerHTML = CHART_SERIES.map(s => {
-    const pts = series[s.venue];
-    const last = pts && pts.length ? fmtPrice(pts[pts.length-1].p) : "—";
-    return `<span class="lg"><span class="sw" style="background:${s.color}"></span><span class="lv">${s.venue}</span> <span class="lp">${last}</span></span>`;
-  }).join("");
+  latHist.p50 = next.p50; latHist.p99 = next.p99;
+  renderLatency();
 }
 
-// Seed the chart with recent history from ClickHouse so it loads with a full
-// line instead of drawing from empty; live updates append on top. Points carry
-// their asset (base) so each goes into the right per-asset window.
+// Seed price + spread with recent history from ClickHouse so the charts load
+// with full lines instead of drawing from empty; live updates append on top.
 async function seedChart(){
   try {
     const res = await fetch("/api/pricehistory"); if(!res.ok) return;
     const pts = (await res.json()).points || [];
     for(const pt of pts){ const a = priceHist[pt.base]; if(!a) continue; const h = a[pt.venue]; if(h) h.push({ t: pt.t_ms, p: pt.price }); }
-    for(const a of CHART_ASSETS) for(const v in priceHist[a]) priceHist[a][v].sort((x,y)=>x.t-y.t);
-    renderChart();
+    for(const a of CHART_ASSETS) for(const v of VENUES) priceHist[a][v].sort((x,y)=>x.t-y.t);
+    // Rebuild the spread series per bucket (venues share bucket timestamps).
+    for(const a of CHART_ASSETS){
+      const byT = new Map();
+      for(const v of VENUES) for(const pt of priceHist[a][v]){ if(!byT.has(pt.t)) byT.set(pt.t, []); byT.get(pt.t).push(pt.p); }
+      const arr = [];
+      for(const t of [...byT.keys()].sort((x,y)=>x-y)){ const vals = byT.get(t); if(vals.length >= 2) arr.push({ t, p: Math.max(...vals) - Math.min(...vals) }); }
+      basisHist[a] = arr;
+    }
+    renderPrice(); renderBasis();
   } catch(e){}
 }
 
+buildSel("chartSel", CHART_ASSETS, () => chartAsset, a => {
+  chartAsset = a; setAssetTitles(); hoverX.priceChart = null; hoverX.basisChart = null;
+  renderPrice(); renderBasis();
+});
+buildSel("latSel", ["p50", "p99"], () => latMetric, m => { latMetric = m; hoverX.latChart = null; renderLatency(); });
+setAssetTitles();
+
+// One Server-Sent Events connection replaces all polling: the server pushes a
+// snapshot ~2×/second and the browser just renders it. EventSource reconnects
+// on its own if the connection drops.
 const es = new EventSource("/api/stream");
 es.onmessage = ev => {
   let d; try { d = JSON.parse(ev.data); } catch(e){ return; }
   if(d.quotes) onQuotes(d.quotes);
   if(d.quotes) recordPrices(d.quotes);
+  if(d.latency) ingestLatency(d.latency);
   if(d.depth){ lastDepth = d.depth; showLadder(); }
   if(d.trades && d.trades.length) appendTape(d.trades);
   if(d.stats) renderStats(d.stats);
@@ -515,20 +608,31 @@ es.onerror = () => setLive(false);
 seedChart();
 
 // Chart hover: track the cursor, position the tooltip, and redraw the crosshair.
-(function(){
-  const c = $("priceChart"); if(!c) return;
-  c.addEventListener("mousemove", e => {
+// Works for mouse and touch, and each chart tracks its own cursor.
+function attachHover(svgId, renderFn){
+  const c = $(svgId); if(!c) return;
+  const move = e => {
     const r = c.getBoundingClientRect();
-    hoverX = (e.clientX - r.left) / r.width * 1000;
+    const p = e.touches ? e.touches[0] : e;
+    hoverX[svgId] = (p.clientX - r.left) / r.width * CHART_W;
     const tp = $("chartTip");
     if(tp){
-      let x = e.clientX + 14; if(x > window.innerWidth - 150) x = e.clientX - 150;
-      tp.style.left = x + "px"; tp.style.top = (e.clientY + 12) + "px";
+      tp.dataset.owner = svgId;
+      let x = p.clientX + 14; if(x > window.innerWidth - 150) x = p.clientX - 150;
+      tp.style.left = x + "px"; tp.style.top = (p.clientY + 12) + "px";
     }
-    renderChart();
-  });
-  c.addEventListener("mouseleave", () => { hoverX = null; renderChart(); });
-})();
+    renderFn();
+  };
+  const leave = () => { hoverX[svgId] = null; const tp = $("chartTip"); if(tp && tp.dataset.owner === svgId) tp.style.display = "none"; renderFn(); };
+  c.addEventListener("mousemove", move);
+  c.addEventListener("mouseleave", leave);
+  c.addEventListener("touchstart", move, { passive: true });
+  c.addEventListener("touchmove", move, { passive: true });
+  c.addEventListener("touchend", leave);
+}
+attachHover("priceChart", renderPrice);
+attachHover("basisChart", renderBasis);
+attachHover("latChart", renderLatency);
 </script>
 </body>
 </html>

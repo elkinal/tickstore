@@ -37,6 +37,7 @@ type Store interface {
 	TableStats(ctx context.Context) ([]sink.TableStat, error)
 	RecentTrades(ctx context.Context, sinceNanos int64, limit int) ([]sink.FeedRow, error)
 	PriceHistory(ctx context.Context, windowSec, bucketSec int) ([]sink.PricePoint, error)
+	LatencyHistory(ctx context.Context, windowSec, bucketSec int) ([]sink.LatencyPoint, error)
 }
 
 // Live is the in-memory read side: current books and recent trades, for the
@@ -164,10 +165,15 @@ func (h *handler) stream(w http.ResponseWriter, r *http.Request) {
 		if len(trades) > 0 {
 			payload["trades"] = trades
 		}
-		// Stats come from ClickHouse; refresh them every ~2s, not every tick.
+		// Stats and latency percentiles come from ClickHouse; refresh them every
+		// ~2s, not every tick. The first tick (0) includes them, so a fresh client
+		// gets a populated chart immediately.
 		if tick%4 == 0 {
 			if s, err := h.buildStats(ctx); err == nil {
 				payload["stats"] = s
+			}
+			if lat, err := h.store.LatencyHistory(ctx, 180, 3); err == nil {
+				payload["latency"] = lat
 			}
 		}
 		b, err := json.Marshal(payload)

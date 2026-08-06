@@ -207,3 +207,52 @@ func (c *ClickHouse) PriceHistory(ctx context.Context, windowSec, bucketSec int)
 	}
 	return out, rows.Err()
 }
+
+// LatencyPoint is one venue's ingest latency (exchange → stored) at one time
+// bucket: the median (P50) and tail (P99) in milliseconds. TMs is a ms epoch.
+type LatencyPoint struct {
+	Venue string  `json:"venue"`
+	TMs   int64   `json:"t_ms"`
+	P50   float64 `json:"p50"`
+	P99   float64 `json:"p99"`
+}
+
+// LatencyHistory returns per-venue ingest latency percentiles (the gap between
+// the exchange timestamp and when tickstore received the trade) over the last
+// windowSec seconds, bucketed to bucketSec. It feeds the dashboard's latency
+// chart, which shows how quickly each venue's feed reaches the pipeline. The
+// diff is clamped to a sane range so a venue with a missing/garbage exchange
+// timestamp can't distort the scale.
+func (c *ClickHouse) LatencyHistory(ctx context.Context, windowSec, bucketSec int) ([]LatencyPoint, error) {
+	const q = `
+		SELECT venue,
+		       toUInt64(toUnixTimestamp(toStartOfInterval(ts_received, toIntervalSecond(?)))) * 1000 AS t_ms,
+		       quantile(0.5)(lat_ms)  AS p50,
+		       quantile(0.99)(lat_ms) AS p99
+		FROM (
+			SELECT venue, ts_received,
+			       (toUnixTimestamp64Nano(ts_received) - toUnixTimestamp64Nano(ts_exchange)) / 1e6 AS lat_ms
+			FROM tickstore.trades
+			WHERE ts_received > now() - toIntervalSecond(?)
+		)
+		WHERE lat_ms >= 0 AND lat_ms < 60000
+		GROUP BY venue, t_ms
+		ORDER BY t_ms`
+	rows, err := c.conn.Query(ctx, q, bucketSec, windowSec)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: latency history: %w", err)
+	}
+	defer rows.Close()
+
+	var out []LatencyPoint
+	for rows.Next() {
+		var venue string
+		var tms uint64
+		var p50, p99 float64
+		if err := rows.Scan(&venue, &tms, &p50, &p99); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan latency point: %w", err)
+		}
+		out = append(out, LatencyPoint{Venue: venue, TMs: int64(tms), P50: p50, P99: p99})
+	}
+	return out, rows.Err()
+}
