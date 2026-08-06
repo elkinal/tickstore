@@ -38,6 +38,13 @@
   .snap:disabled { opacity: .45; cursor: default; }
   .snap.done { color: var(--buy); border-color: var(--buy); }
   .clock { color: var(--dim); font-size: 12px; letter-spacing: .5px; }
+  .tabs { display: flex; gap: 2px; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .tabs button { font: inherit; font-size: 12px; letter-spacing: .3px; color: var(--dim);
+    background: transparent; border: none; border-bottom: 2px solid transparent;
+    padding: 8px 13px; margin-bottom: -1px; cursor: pointer; }
+  .tabs button:hover { color: var(--text); }
+  .tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  .tabpane[hidden] { display: none; }
 
   /* Metrics — flat, wraps on small screens */
   .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
@@ -187,6 +194,12 @@
     <span class="clock" id="clock">—</span>
   </header>
 
+  <nav class="tabs" id="tabs">
+    <button data-tab="market" class="on">Market</button>
+    <button data-tab="tech">Technical</button>
+  </nav>
+
+  <div class="tabpane" id="tab-market">
   <div class="metrics">
     <div class="metric"><div class="k">Rows stored</div><div class="v" id="totalRows">—</div><div class="sub">trades + book</div></div>
     <div class="metric"><div class="k">Storage</div><div class="v" id="bytes">—</div><div class="sub">compressed · 30d/90d TTL</div></div>
@@ -216,7 +229,9 @@
     <div class="chartwrap"><svg id="priceChart" class="pc" viewBox="0 0 1000 240"></svg></div>
     <div class="legend" id="chartLegend"></div>
   </div>
+  </div><!-- /tab-market -->
 
+  <div class="tabpane" id="tab-tech" hidden>
   <div class="panel chart-panel">
     <div class="ph"><span class="t" id="basisTitle">Cross-venue spread</span><span class="n">max − min · same-currency venues · live</span></div>
     <div class="chartwrap"><svg id="basisChart" class="pc" viewBox="0 0 1000 240"></svg></div>
@@ -229,6 +244,7 @@
     <div class="chartwrap"><svg id="latChart" class="pc" viewBox="0 0 1000 240"></svg></div>
     <div class="legend" id="latLegend"></div>
   </div>
+  </div><!-- /tab-tech -->
 
   <div class="charttip" id="chartTip"></div>
 </div>
@@ -631,6 +647,20 @@ buildSel("chartSel", CHART_ASSETS, () => chartAsset, a => {
 });
 buildSel("latSel", ["p50", "p99"], () => latMetric, m => { latMetric = m; hoverX.latChart = null; renderLatency(); });
 setAssetTitles();
+
+// Top-level tabs: keep the market view (quotes, book, tape, price) separate from
+// the technical charts (spread, latency). Charts keep rendering while hidden, so
+// switching just reveals an already-current SVG — re-rendered on show so hover
+// geometry picks up the now-visible width.
+(function(){
+  const nav = $("tabs"); if(!nav) return;
+  for(const b of nav.children) b.onclick = () => {
+    for(const x of nav.children) x.classList.toggle("on", x === b);
+    $("tab-market").hidden = b.dataset.tab !== "market";
+    $("tab-tech").hidden = b.dataset.tab !== "tech";
+    renderPrice(); renderBasis(); renderLatency();
+  };
+})();
 
 // One Server-Sent Events connection replaces all polling: the server pushes a
 // snapshot ~2×/second and the browser just renders it. EventSource reconnects
