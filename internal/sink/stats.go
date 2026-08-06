@@ -330,7 +330,7 @@ func (c *ClickHouse) ThroughputHistory(ctx context.Context, windowSec, bucketSec
 	const mv = `
 		SELECT venue, 'trades' AS source,
 		       toUInt64(toUnixTimestamp(toStartOfInterval(minute, toIntervalSecond(?)))) * 1000 AS t_ms,
-		       sum(countMerge(cnt_state)) / ? AS rate
+		       countMerge(cnt_state) / ? AS rate
 		FROM tickstore.trades_1m
 		WHERE minute > now() - toIntervalSecond(?)
 		GROUP BY venue, t_ms
