@@ -150,6 +150,18 @@
   .legend .sw { width: 12px; height: 3px; border-radius: 2px; }
   .legend .lv { color: var(--dim); }
   .legend .lp { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+  #priceChart { cursor: crosshair; }
+  #priceChart .pc-cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+  .charttip { position: fixed; z-index: 60; pointer-events: none; display: none;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px 9px; font-size: 11.5px; box-shadow: 0 6px 18px rgba(0,0,0,.45);
+    font-variant-numeric: tabular-nums; }
+  .charttip .tt-t { color: var(--muted); font-size: 10.5px; margin-bottom: 4px; }
+  .charttip .tt-row { display: flex; align-items: center; gap: 7px; }
+  .charttip .tt-row + .tt-row { margin-top: 2px; }
+  .charttip .tt-sw { width: 10px; height: 3px; border-radius: 2px; }
+  .charttip .tt-v { color: var(--dim); }
+  .charttip .tt-p { color: var(--text); font-weight: 600; margin-left: 14px; }
 </style>
 </head>
 <body>
@@ -187,6 +199,7 @@
     <div class="ph"><span class="t">BTC price · cross-venue</span><span class="n">last 3 min · live</span></div>
     <div class="chartwrap"><svg id="priceChart" viewBox="0 0 1000 240"></svg></div>
     <div class="legend" id="chartLegend"></div>
+    <div class="charttip" id="chartTip"></div>
   </div>
 </div>
 
@@ -362,6 +375,7 @@ const CHART_SERIES = [
   { venue: "okx",      color: "#c98216" },
 ];
 const priceHist = { coinbase: [], kraken: [], okx: [] };
+let hoverX = null; // cursor x in viewBox units while hovering the chart
 
 function recordPrices(quotes){
   try {
@@ -408,7 +422,34 @@ function renderChart(){
     const last = pts[pts.length-1];
     h += `<circle cx="${X(last.t).toFixed(1)}" cy="${Y(last.p).toFixed(1)}" r="2.6" fill="${s.color}"/>`;
   }
+  // Hover crosshair: a dashed vertical line at the cursor plus a dot on each
+  // line at the nearest sample, and a tooltip listing the exact prices.
+  if(hoverX !== null && hoverX >= padL && hoverX <= W-padR){
+    const ht = tMin + (hoverX-padL)/(W-padL-padR)*(tMax-tMin);
+    h += `<line class="pc-cross" x1="${hoverX.toFixed(1)}" y1="${padT}" x2="${hoverX.toFixed(1)}" y2="${(H-padB).toFixed(1)}"/>`;
+    const rows = [];
+    for(const s of CHART_SERIES){
+      const pt = nearest(priceHist[s.venue], ht); if(!pt) continue;
+      h += `<circle cx="${X(pt.t).toFixed(1)}" cy="${Y(pt.p).toFixed(1)}" r="3.2" fill="${s.color}" stroke="var(--bg)" stroke-width="1.2"/>`;
+      rows.push({ venue: s.venue, color: s.color, price: pt.p });
+    }
+    updateTip(ht, rows);
+  } else { const tp=$("chartTip"); if(tp) tp.style.display="none"; }
   svg.innerHTML = h; renderLegend();
+}
+function nearest(arr, t){
+  if(!arr || !arr.length) return null;
+  let best=arr[0], bd=Math.abs(arr[0].t-t);
+  for(let i=1;i<arr.length;i++){ const d=Math.abs(arr[i].t-t); if(d<bd){bd=d;best=arr[i];} }
+  return best;
+}
+function updateTip(t, rows){
+  const el = $("chartTip"); if(!el) return;
+  if(!rows.length){ el.style.display="none"; return; }
+  const d = new Date(t), tm = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  el.innerHTML = `<div class="tt-t">${tm}</div>` + rows.map(r =>
+    `<div class="tt-row"><span class="tt-sw" style="background:${r.color}"></span><span class="tt-v">${r.venue}</span><span class="tt-p">${fmtPrice(r.price)}</span></div>`).join("");
+  el.style.display = "block";
 }
 function renderLegend(){
   const el = $("chartLegend"); if(!el) return;
@@ -443,6 +484,22 @@ es.onmessage = ev => {
 };
 es.onerror = () => setLive(false);
 seedChart();
+
+// Chart hover: track the cursor, position the tooltip, and redraw the crosshair.
+(function(){
+  const c = $("priceChart"); if(!c) return;
+  c.addEventListener("mousemove", e => {
+    const r = c.getBoundingClientRect();
+    hoverX = (e.clientX - r.left) / r.width * 1000;
+    const tp = $("chartTip");
+    if(tp){
+      let x = e.clientX + 14; if(x > window.innerWidth - 150) x = e.clientX - 150;
+      tp.style.left = x + "px"; tp.style.top = (e.clientY + 12) + "px";
+    }
+    renderChart();
+  });
+  c.addEventListener("mouseleave", () => { hoverX = null; renderChart(); });
+})();
 </script>
 </body>
 </html>
