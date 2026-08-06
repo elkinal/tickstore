@@ -31,7 +31,13 @@
   .brand .s { color: var(--muted); font-weight: 400; }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--buy); flex: none; }
   .dot.down { background: var(--sell); }
-  .clock { margin-left: auto; color: var(--dim); font-size: 12px; letter-spacing: .5px; }
+  .snap { margin-left: auto; font: inherit; font-size: 11px; letter-spacing: .3px;
+    color: var(--dim); background: transparent; border: 1px solid var(--line);
+    border-radius: 5px; padding: 4px 9px; cursor: pointer; flex: none; }
+  .snap:hover { color: var(--text); border-color: var(--muted); }
+  .snap:disabled { opacity: .45; cursor: default; }
+  .snap.done { color: var(--buy); border-color: var(--buy); }
+  .clock { color: var(--dim); font-size: 12px; letter-spacing: .5px; }
 
   /* Metrics — flat, wraps on small screens */
   .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
@@ -175,6 +181,7 @@
   <header>
     <span class="dot" id="dot"></span>
     <span class="brand"><span class="k">tick</span>store<span class="s">/live</span></span>
+    <button class="snap" id="snapBtn" title="Download the current on-screen data as a CSV" disabled>↓ CSV</button>
     <span class="clock" id="clock">—</span>
   </header>
 
@@ -227,7 +234,7 @@
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
-let prevTotal = null, prevAt = null, selected = null, lastDepth = {};
+let prevTotal = null, prevAt = null, selected = null, lastDepth = {}, lastQuotes = [];
 const prevQ = {};
 const BIG_NOTIONAL = 15000;
 // On mobile the tape is laid out in full (no inner scroll), so keep fewer rows
@@ -244,6 +251,8 @@ const pad = n => String(n).padStart(2,"0");
 function setLive(ok){ $("dot").classList.toggle("down", !ok); }
 
 function onQuotes(quotes){
+  lastQuotes = quotes; // latest snapshot, for the CSV export
+  if(quotes.length) $("snapBtn").disabled = false;
   renderQuotes(quotes); renderSel(quotes);
   let g=0,r=0; for(const q of quotes){ g+=q.gaps; r+=q.resyncs; }
   const el=$("gaps"); el.textContent=fmtInt(g)+" / "+fmtInt(r); el.classList.toggle("warn", g>0);
@@ -633,6 +642,48 @@ function attachHover(svgId, renderFn){
 attachHover("priceChart", renderPrice);
 attachHover("basisChart", renderBasis);
 attachHover("latChart", renderLatency);
+
+// ---------- CSV snapshot ----------
+// Exports what the browser already holds — the current cross-venue quotes plus
+// the depth ladder and tape of the selected market. It's built entirely in the
+// page from live state and downloaded as a Blob: no server endpoint, no query,
+// nothing that can be hammered or coaxed into dumping more than what's on screen.
+function csvEscape(v){ const s = v==null ? "" : String(v); return /[",\n\r]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; }
+function toCSV(rows){ return rows.map(r => r.map(csvEscape).join(",")).join("\r\n"); }
+function downloadText(name, text){
+  const blob = new Blob([text], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function stampCompact(d){ return `${d.getUTCFullYear()}${pad(d.getUTCMonth()+1)}${pad(d.getUTCDate())}-${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}`; }
+
+function saveSnapshot(){
+  if(!lastQuotes.length) return;
+  const now = new Date(), iso = now.toISOString();
+  const rows = [];
+  // Section 1: the cross-venue quote grid — the instantaneous market snapshot.
+  rows.push(["section","captured_utc","venue","symbol","base","quote","bid","bid_size","ask","ask_size","spread","last","last_side","synced"]);
+  const quotes = [...lastQuotes].sort((a,b) => (a.base+a.quote+a.venue).localeCompare(b.base+b.quote+b.venue));
+  for(const q of quotes){
+    rows.push(["quote", iso, q.venue, q.symbol, q.base, q.quote, q.bid, q.bid_size, q.ask, q.ask_size, q.spread, q.last, q.last_side, q.synced ? "1" : "0"]);
+  }
+  // Section 2: the selected market's order-book ladder, if one is open.
+  if(selected){
+    const key = selected.venue + "|" + selected.symbol, bd = lastDepth[key];
+    if(bd){
+      rows.push([]);
+      rows.push(["section","captured_utc","venue","symbol","side","level","price","size","cumulative"]);
+      const emit = (side, arr) => (arr||[]).forEach((r,i) => rows.push([side, iso, selected.venue, selected.symbol, side, i+1, r.price, r.size, r.cum]));
+      emit("bid", bd.bids); emit("ask", bd.asks);
+    }
+  }
+  downloadText(`tickstore-snapshot-${stampCompact(now)}.csv`, toCSV(rows));
+  const btn = $("snapBtn"); btn.classList.add("done"); const t = btn.textContent; btn.textContent = "✓ saved";
+  setTimeout(() => { btn.classList.remove("done"); btn.textContent = t; }, 1400);
+}
+$("snapBtn").addEventListener("click", saveSnapshot);
 </script>
 </body>
 </html>
