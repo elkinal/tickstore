@@ -139,6 +139,17 @@
     .trow { grid-template-columns: 54px 66px 40px 1fr auto; }
     .trow .sym { display: none; }
   }
+  /* BTC cross-venue price chart */
+  .chart-panel { margin-top: 12px; }
+  .chartwrap { padding: 8px 10px 2px; }
+  #priceChart { width: 100%; height: auto; display: block; }
+  #priceChart .pc-grid { stroke: var(--line2); stroke-width: 1; }
+  #priceChart .pc-lbl { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .legend { display: flex; flex-wrap: wrap; gap: 18px; padding: 4px 14px 12px; font-size: 12px; }
+  .legend .lg { display: inline-flex; align-items: center; gap: 7px; }
+  .legend .sw { width: 12px; height: 3px; border-radius: 2px; }
+  .legend .lv { color: var(--dim); }
+  .legend .lp { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -170,6 +181,12 @@
       <div class="ph"><span class="t">Time &amp; Sales</span><span class="n">large prints highlighted</span></div>
       <div class="scroll" id="tapeFeed"><div class="empty">waiting for trades…</div></div>
     </div>
+  </div>
+
+  <div class="panel chart-panel">
+    <div class="ph"><span class="t">BTC price · cross-venue</span><span class="n">last 3 min · live</span></div>
+    <div class="chartwrap"><svg id="priceChart" viewBox="0 0 1000 240"></svg></div>
+    <div class="legend" id="chartLegend"></div>
   </div>
 </div>
 
@@ -335,10 +352,71 @@ function renderStats(s){
 // One Server-Sent Events connection replaces all polling: the server pushes a
 // snapshot ~2×/second and the browser just renders it. EventSource reconnects
 // on its own if the connection drops.
+// ---------- BTC cross-venue price chart ----------
+// Accumulates a rolling window of each venue's BTC mid from the quotes already
+// arriving over SSE (no server change needed) and draws it as three lines.
+const CHART_WINDOW_MS = 3 * 60 * 1000;
+const CHART_SERIES = [
+  { venue: "coinbase", color: "#3a91c9" }, // validated CVD-safe categorical trio
+  { venue: "kraken",   color: "#bd6b9a" },
+  { venue: "okx",      color: "#c98216" },
+];
+const priceHist = { coinbase: [], kraken: [], okx: [] };
+
+function recordPrices(quotes){
+  try {
+    const now = Date.now(), cutoff = now - CHART_WINDOW_MS;
+    for(const q of quotes){
+      if(q.base !== "BTC") continue;
+      const h = priceHist[q.venue]; if(!h) continue;
+      const p = q.mid || q.last; if(!p) continue;
+      h.push({ t: now, p });
+      while(h.length && h[0].t < cutoff) h.shift();
+    }
+    renderChart();
+  } catch(e){}
+}
+function fmtPrice(p){ return p >= 1000 ? Math.round(p).toLocaleString("en-US") : p.toFixed(2); }
+function renderChart(){
+  const svg = $("priceChart"); if(!svg) return;
+  const W=1000, H=240, padT=12, padB=16, padL=54, padR=10;
+  const now = Date.now(), tMin = now - CHART_WINDOW_MS, tMax = now;
+  let pMin=Infinity, pMax=-Infinity, any=false;
+  for(const s of CHART_SERIES) for(const pt of priceHist[s.venue]){ if(pt.p<pMin)pMin=pt.p; if(pt.p>pMax)pMax=pt.p; any=true; }
+  if(!any){ svg.innerHTML=""; renderLegend(); return; }
+  if(pMin===pMax){ pMin-=1; pMax+=1; }
+  const gp=(pMax-pMin)*0.12 || 1; pMin-=gp; pMax+=gp;
+  const X = t => padL + (t-tMin)/(tMax-tMin) * (W-padL-padR);
+  const Y = p => padT + (1-(p-pMin)/(pMax-pMin)) * (H-padT-padB);
+  let h="";
+  for(let i=0;i<=4;i++){
+    const p = pMin+(pMax-pMin)*i/4, y=Y(p);
+    h += `<line class="pc-grid" x1="${padL}" y1="${y.toFixed(1)}" x2="${W-padR}" y2="${y.toFixed(1)}"/>`;
+    h += `<text class="pc-lbl" x="6" y="${(y+3.5).toFixed(1)}">${fmtPrice(p)}</text>`;
+  }
+  for(const s of CHART_SERIES){
+    const pts = priceHist[s.venue]; if(pts.length<2) continue;
+    const d = pts.map(pt=>`${X(pt.t).toFixed(1)},${Y(pt.p).toFixed(1)}`).join(" ");
+    h += `<polyline points="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    const last = pts[pts.length-1];
+    h += `<circle cx="${X(last.t).toFixed(1)}" cy="${Y(last.p).toFixed(1)}" r="2.6" fill="${s.color}"/>`;
+  }
+  svg.innerHTML = h; renderLegend();
+}
+function renderLegend(){
+  const el = $("chartLegend"); if(!el) return;
+  el.innerHTML = CHART_SERIES.map(s => {
+    const pts = priceHist[s.venue];
+    const last = pts && pts.length ? fmtPrice(pts[pts.length-1].p) : "—";
+    return `<span class="lg"><span class="sw" style="background:${s.color}"></span><span class="lv">${s.venue}</span> <span class="lp">${last}</span></span>`;
+  }).join("");
+}
+
 const es = new EventSource("/api/stream");
 es.onmessage = ev => {
   let d; try { d = JSON.parse(ev.data); } catch(e){ return; }
   if(d.quotes) onQuotes(d.quotes);
+  if(d.quotes) recordPrices(d.quotes);
   if(d.depth){ lastDepth = d.depth; showLadder(); }
   if(d.trades && d.trades.length) appendTape(d.trades);
   if(d.stats) renderStats(d.stats);
