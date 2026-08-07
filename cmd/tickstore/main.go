@@ -23,6 +23,7 @@ import (
 	"github.com/elkinal/tickstore/internal/live"
 	"github.com/elkinal/tickstore/internal/metrics"
 	"github.com/elkinal/tickstore/internal/norm"
+	"github.com/elkinal/tickstore/internal/queue"
 	"github.com/elkinal/tickstore/internal/sink"
 	"github.com/elkinal/tickstore/internal/venue"
 	"github.com/elkinal/tickstore/internal/venue/coinbase"
@@ -52,11 +53,15 @@ func (stdoutHandler) OnTrade(t norm.Trade) {
 	)
 }
 
-// tradeSink adapts a trade Batcher to venue.Handler: it records per-trade
-// metrics (the Batcher itself is metric-agnostic), updates the live registry for
-// the dashboard, and queues the row. reg may be nil.
+// addSink is the persistence target for one feed: either a ClickHouse Batcher
+// (direct) or a queue.Publisher (JetStream in front of ClickHouse). Both have Add.
+type addSink[T any] interface{ Add(v T) }
+
+// tradeSink adapts a trade sink to venue.Handler: it records per-trade metrics
+// (the sink itself is metric-agnostic), updates the live registry for the
+// dashboard, and hands the row to persistence. reg may be nil.
 type tradeSink struct {
-	b   *sink.Batcher[norm.Trade]
+	b   addSink[norm.Trade]
 	reg *live.Registry
 }
 
@@ -71,10 +76,10 @@ func (s tradeSink) OnTrade(t norm.Trade) {
 	s.b.Add(t)
 }
 
-// bookSink adapts a book Batcher to venue.BookSink: it queues each L2 change for
-// batched insertion into book_updates.
+// bookSink adapts a book sink to venue.BookSink: it hands each L2 change to
+// persistence (a ClickHouse batcher or the queue).
 type bookSink struct {
-	b *sink.Batcher[norm.BookUpdate]
+	b addSink[norm.BookUpdate]
 }
 
 // OnBookUpdate enqueues one book-level change.
@@ -122,7 +127,7 @@ func main() {
 	chCfg := sink.ClickHouseConfig{
 		Addr: *chAddr, Database: *chDB, Username: *chUser, Password: *chPass,
 	}
-	handler, ch, onShutdown, err := buildHandler(ctx, chCfg, sink.Config{Logger: log}, nil, log)
+	handler, ch, onShutdown, err := buildHandler(ctx, chCfg, sink.Config{Logger: log}, nil, nil, log)
 	if err != nil {
 		log.Error("startup failed", "error", err)
 		os.Exit(1)
@@ -173,28 +178,50 @@ func runConfig(ctx context.Context, path string, log *slog.Logger) {
 		reg = live.NewRegistry()
 	}
 
-	handler, ch, onShutdown, err := buildHandler(ctx, chCfg, sinkCfg, reg, log)
+	// Optionally route persistence through a durable NATS JetStream log instead of
+	// inserting to ClickHouse directly. Off unless configured.
+	var bus *queue.Bus
+	if cfg.Queue.Enabled && cfg.ClickHouse.Addr != "" {
+		bus, err = queue.Open(ctx, cfg.Queue.URL, cfg.Queue.Stream, log)
+		if err != nil {
+			log.Error("queue startup failed", "error", err)
+			os.Exit(1)
+		}
+		log.Info("persistence via jetstream", "url", cfg.Queue.URL, "stream", cfg.Queue.Stream)
+	}
+
+	handler, ch, onShutdown, err := buildHandler(ctx, chCfg, sinkCfg, reg, bus, log)
 	if err != nil {
 		log.Error("startup failed", "error", err)
 		os.Exit(1)
 	}
 
-	// Optionally persist order books ("the firehose"): a second batcher on the
-	// same connection, feeding book connectors alongside the trade ones.
+	// Optionally persist order books ("the firehose"): through the queue if one is
+	// configured, otherwise a second batcher on the same ClickHouse connection.
 	var books venue.BookSink
 	var flushBooks func()
 	if cfg.PersistBooks && ch != nil {
-		sinkCfg.Logger = log
-		bookBatcher := sink.NewBatcher[norm.BookUpdate](ch.Books(), sinkCfg)
-		books = bookSink{bookBatcher}
-		flushBooks = func() {
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-			defer cancel()
-			if err := bookBatcher.Close(shutdownCtx); err != nil {
-				log.Error("book sink did not flush cleanly", "error", err)
+		if bus != nil {
+			go func() {
+				if err := queue.Consume[norm.BookUpdate](ctx, bus, queue.SubjectBook, "book-sink", ch.Books(), log); err != nil {
+					log.Error("book queue consumer stopped", "error", err)
+				}
+			}()
+			books = bookSink{queue.NewPublisher[norm.BookUpdate](bus, queue.SubjectBook)}
+			log.Info("persisting order books via jetstream")
+		} else {
+			sinkCfg.Logger = log
+			bookBatcher := sink.NewBatcher[norm.BookUpdate](ch.Books(), sinkCfg)
+			books = bookSink{bookBatcher}
+			flushBooks = func() {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+				defer cancel()
+				if err := bookBatcher.Close(shutdownCtx); err != nil {
+					log.Error("book sink did not flush cleanly", "error", err)
+				}
 			}
+			log.Info("persisting order books to clickhouse")
 		}
-		log.Info("persisting order books to clickhouse")
 	}
 
 	go metrics.Serve(ctx, cfg.Metrics.Addr, log)
@@ -253,12 +280,19 @@ func runConfig(ctx context.Context, path string, log *slog.Logger) {
 	}
 	wg.Wait()
 
-	// Flush trades and books before closing the shared connection.
+	// Flush trades and books before closing the shared connection. With a queue,
+	// draining it flushes any pending publishes to the durable log; whatever the
+	// consumers hadn't inserted yet stays in the log for the next start.
 	if onShutdown != nil {
 		onShutdown()
 	}
 	if flushBooks != nil {
 		flushBooks()
+	}
+	if bus != nil {
+		if err := bus.Close(); err != nil {
+			log.Error("queue did not drain cleanly", "error", err)
+		}
 	}
 	if ch != nil {
 		ch.Close()
@@ -371,7 +405,7 @@ func (p *bookPrinter) OnBook(b *book.Book) {
 // printing to stdout, so callers can build a book sink on the same connection),
 // and a hook that flushes the trade batcher after the connector stops. The
 // caller owns closing ch (after every batcher on it has flushed).
-func buildHandler(ctx context.Context, cfg sink.ClickHouseConfig, sinkCfg sink.Config, reg *live.Registry, log *slog.Logger) (venue.Handler, *sink.ClickHouse, func(), error) {
+func buildHandler(ctx context.Context, cfg sink.ClickHouseConfig, sinkCfg sink.Config, reg *live.Registry, bus *queue.Bus, log *slog.Logger) (venue.Handler, *sink.ClickHouse, func(), error) {
 	if cfg.Addr == "" {
 		return stdoutHandler{}, nil, nil, nil
 	}
@@ -394,9 +428,21 @@ func buildHandler(ctx context.Context, cfg sink.ClickHouseConfig, sinkCfg sink.C
 		}
 	}()
 	sinkCfg.Logger = log
+
+	// With a queue, trades are published to the log and a consumer drains them to
+	// ClickHouse (durable across crashes); otherwise they batch straight in.
+	if bus != nil {
+		go func() {
+			if err := queue.Consume[norm.Trade](ctx, bus, queue.SubjectTrades, "trade-sink", ch.Trades(), log); err != nil {
+				log.Error("trade queue consumer stopped", "error", err)
+			}
+		}()
+		log.Info("writing trades via jetstream to clickhouse", "addr", cfg.Addr)
+		return tradeSink{b: queue.NewPublisher[norm.Trade](bus, queue.SubjectTrades), reg: reg}, ch, func() {}, nil
+	}
+
 	batcher := sink.NewBatcher[norm.Trade](ch.Trades(), sinkCfg)
 	log.Info("writing trades to clickhouse", "addr", cfg.Addr)
-
 	flush := func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()

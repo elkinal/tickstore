@@ -177,11 +177,11 @@
   .pc .pc-cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
   /* Left-to-right line reveal on range/tab change (pathLength normalizes to 100
      so one keyframe fits every line). Area fills and end dots fade in with it. */
-  .pc polyline.draw { stroke-dasharray: 100; animation: pcdraw .6s ease-out both; }
+  .pc path.draw { stroke-dasharray: 100; animation: pcdraw .6s ease-out both; }
   @keyframes pcdraw { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
   .pc .afade { animation: pcfade .6s ease-out both; }
   @keyframes pcfade { from { opacity: 0; } to { opacity: 1; } }
-  @media (prefers-reduced-motion: reduce) { .pc polyline.draw, .pc .afade { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .pc path.draw, .pc .afade { animation: none; } }
   .legend { display: flex; flex-wrap: wrap; gap: 18px; padding: 4px 14px 12px; font-size: 12px; }
   .legend .lg { display: inline-flex; align-items: center; gap: 7px; }
   .legend .sw { width: 12px; height: 3px; border-radius: 2px; }
@@ -557,6 +557,30 @@ function fmtAxisTime(ms, span){
   if(span/3 >= 60000)  return `${hh}:${mi}`;             // minute-plus ticks: HH:MM
   return `${hh}:${mi}:${ss}`;                            // sub-minute ticks: HH:MM:SS
 }
+// Monotone cubic (Fritsch–Carlson) SVG path through [x,y] points: smooth curves
+// that never overshoot the data, so a genuine spike stays a spike and the line
+// can't dip below the values it connects (e.g. a spread below $0). Flat segments
+// (the edge extensions) stay flat.
+function smoothPath(P){
+  const n = P.length;
+  if(n < 2) return n ? `M${P[0][0]},${P[0][1]}` : "";
+  const dx = [], d = [];
+  for(let i=0;i<n-1;i++){ dx[i]=P[i+1][0]-P[i][0]; d[i]= dx[i] ? (P[i+1][1]-P[i][1])/dx[i] : 0; }
+  const m = new Array(n);
+  m[0] = d[0]; m[n-1] = d[n-2];
+  for(let i=1;i<n-1;i++) m[i] = d[i-1]*d[i] <= 0 ? 0 : (d[i-1]+d[i])/2;
+  for(let i=0;i<n-1;i++){
+    if(d[i] === 0){ m[i]=0; m[i+1]=0; continue; }
+    const a = m[i]/d[i], b = m[i+1]/d[i], s = a*a + b*b;
+    if(s > 9){ const t = 3/Math.sqrt(s); m[i] = t*a*d[i]; m[i+1] = t*b*d[i]; }
+  }
+  let out = `M${P[0][0].toFixed(1)},${P[0][1].toFixed(1)}`;
+  for(let i=0;i<n-1;i++){
+    const h = dx[i]/3;
+    out += ` C${(P[i][0]+h).toFixed(1)},${(P[i][1]+m[i]*h).toFixed(1)} ${(P[i+1][0]-h).toFixed(1)},${(P[i+1][1]-m[i+1]*h).toFixed(1)} ${P[i+1][0].toFixed(1)},${P[i+1][1].toFixed(1)}`;
+  }
+  return out;
+}
 
 // drawChart renders one line chart into svgId. cfg.series is [{name,color,pts}];
 // fmtLbl formats y-axis labels and fmtVal formats hover values. zeroFloor pins
@@ -614,18 +638,19 @@ function drawChart(svgId, cfg){
     const first = pts[0], last = pts[pts.length-1];
     const stale = (tMax - last.t) > staleMs;
     const rx = stale ? X(last.t) : X(tMax);
-    const coords = [`${X(tMin).toFixed(1)},${Y(first.p).toFixed(1)}`];
-    for(const pt of pts) coords.push(`${X(pt.t).toFixed(1)},${Y(pt.p).toFixed(1)}`);
-    if(!stale) coords.push(`${rx.toFixed(1)},${Y(last.p).toFixed(1)}`);
+    const P = [[X(tMin), Y(first.p)]];
+    for(const pt of pts) P.push([X(pt.t), Y(pt.p)]);
+    if(!stale) P.push([rx, Y(last.p)]);
+    const line = smoothPath(P); // monotone-cubic curve through the points
     // Gradient area fill under single-series charts (the trading-chart look).
     if(cfg.area){
       const gid = "area-" + svgId;
       defs += `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:${s.color};stop-opacity:.30"/><stop offset="1" style="stop-color:${s.color};stop-opacity:0"/></linearGradient></defs>`;
-      const poly = [`${X(tMin).toFixed(1)},${yb.toFixed(1)}`, ...coords, `${rx.toFixed(1)},${yb.toFixed(1)}`];
-      h += `<polygon${fadeCls} points="${poly.join(" ")}" fill="url(#${gid})"/>`;
+      const area = `${line} L${P[P.length-1][0].toFixed(1)},${yb.toFixed(1)} L${P[0][0].toFixed(1)},${yb.toFixed(1)} Z`;
+      h += `<path${fadeCls} d="${area}" fill="url(#${gid})"/>`;
     }
     const drawAttr = anim ? ' class="draw" pathLength="100"' : '';
-    h += `<polyline${drawAttr} points="${coords.join(" ")}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    h += `<path${drawAttr} d="${line}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
     h += stale
       ? `<circle${fadeCls} cx="${rx.toFixed(1)}" cy="${Y(last.p).toFixed(1)}" r="2.8" fill="var(--bg)" stroke="${s.color}" stroke-width="1.6"/>`
       : `<circle${fadeCls} cx="${rx.toFixed(1)}" cy="${Y(last.p).toFixed(1)}" r="2.6" fill="${s.color}"/>`;

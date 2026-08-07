@@ -12,6 +12,15 @@ sink:
   max_delay: 250ms
   buffer: 20000
 
+# Route persistence through a durable NATS JetStream log: ingest publishes to the
+# stream and a consumer drains it into ClickHouse, acking only after the insert
+# (so a crash can't lose rows that reached the log). The dashboard's live views
+# are unaffected. Reaches NATS by its compose service name.
+queue:
+  enabled: true
+  url: nats://nats:4222
+  stream: TICKS
+
 metrics:
   addr: ":9090"
 

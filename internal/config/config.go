@@ -14,6 +14,7 @@ import (
 type Config struct {
 	ClickHouse ClickHouse `yaml:"clickhouse"`
 	Sink       Sink       `yaml:"sink"`
+	Queue      Queue      `yaml:"queue"`
 	Metrics    Metrics    `yaml:"metrics"`
 	Dashboard  Dashboard  `yaml:"dashboard"`
 	Venues     []Venue    `yaml:"venues"`
@@ -21,6 +22,16 @@ type Config struct {
 	// book_updates table. It's off by default: the book feed is far higher
 	// volume than trades ("the firehose"), so it's opt-in.
 	PersistBooks bool `yaml:"persist_books"`
+}
+
+// Queue optionally routes persistence through a NATS JetStream log instead of
+// inserting to ClickHouse directly: ingest publishes to the stream and a consumer
+// drains it into ClickHouse, acking only after the insert. Off by default. The
+// dashboard's live views are unaffected — they read in-memory state, not the log.
+type Queue struct {
+	Enabled bool   `yaml:"enabled"`
+	URL     string `yaml:"url"`    // e.g. nats://nats:4222
+	Stream  string `yaml:"stream"` // JetStream stream name, e.g. TICKS
 }
 
 // Metrics configures the Prometheus endpoint. An empty Addr disables it.

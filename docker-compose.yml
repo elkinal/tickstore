@@ -32,12 +32,32 @@ services:
       timeout: 2s
       retries: 20
 
+  # Durable log between ingest and the ClickHouse sink (enable in config.yaml).
+  # JetStream with file storage; memory-capped so it can never starve ClickHouse
+  # on the shared box.
+  nats:
+    image: nats:2-alpine
+    restart: unless-stopped
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    mem_limit: 256m
+    volumes:
+      - nats-data:/data
+    ports:
+      - "127.0.0.1:4222:4222"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   tickstore:
     build: .
     restart: unless-stopped
     depends_on:
       clickhouse:
         condition: service_healthy # wait for the DB before connecting
+      nats:
+        condition: service_healthy
     environment:
       # Passed into the container so the config file's ${...} refs resolve.
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-tickstore}
@@ -71,5 +91,6 @@ services:
 
 volumes:
   clickhouse-data:
+  nats-data:
   caddy-data:
   caddy-config:

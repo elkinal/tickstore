@@ -700,3 +700,42 @@ a background goroutine so its one-time ~10^9-row book scan doesn't stall startup
 
 **Revisit.** If custom ranges routinely span weeks, a coarser (hourly) rollup tier
 would keep point counts and scans down; the book TTL (30d) still caps reach.
+
+## D25 — Optional NATS JetStream log between ingest and the ClickHouse sink
+*2026-08-07*
+
+**Decision.** Persistence can be routed through a durable NATS JetStream log
+(`queue.enabled`): the venue handlers publish normalized trades/book updates to a
+work-queue stream, and a consumer drains them into ClickHouse, acking only after
+a successful insert. The dashboard's live views still read the in-memory registry
+directly, so the queue sits in front of persistence only. The trade/book sink is
+an interface (`Add(T)`) satisfied by both the ClickHouse `Batcher` (direct) and
+the queue `Publisher`, so it's a drop-in swap. NATS runs as a memory-capped
+(256 MB) compose service; it's off unless configured.
+
+**Why.**
+- *Crash durability.* The one real gap the queue closes: a batch buffered in
+  memory is lost if the process dies before it flushes. With the log, a row that
+  reached the stream survives — the consumer acks only post-insert, so a crash
+  redelivers and re-inserts (at-least-once).
+- *NATS JetStream over Kafka/Redpanda.* The VPS is 1.9 GB RAM with no swap and
+  ~700 MB free; Redpanda wants ~0.5-1 GB and would risk OOM-killing ClickHouse.
+  JetStream fits in tens of MB and gives the same durable-log/replay semantics —
+  the lightweight queue the scale actually calls for (~1k msgs/s). See D25 notes
+  vs. Kafka in the session log.
+- *Live path stays direct.* Routing the dashboard's low-latency state through the
+  log would add hops for no benefit; only the durable-storage path needs it.
+
+**Cost.**
+- At-least-once means a crash between insert and ack re-inserts a batch;
+  trades/books have no dedup key, so a rare duplicate is possible. Acceptable at
+  this scale; a `ReplacingMergeTree` keyed on (venue, ts, seq) would remove it.
+- One more moving part to run and monitor. Kept off by default and capped so it
+  can't threaten ClickHouse.
+- JSON encoding on the wire (simple, ~1k msgs/s is trivial); a compact codec
+  would matter only at much higher volume.
+
+**Revisit.** If volume grows or a real stream-processing layer is wanted, this is
+the seam to graduate to Kafka/Redpanda on dedicated hardware. Producer-side
+delivery is fire-and-forget async publish; a confirmed-publish path would close
+the last (tiny) producer-crash window.

@@ -65,6 +65,10 @@ reconstructed book also feeds the live dashboard from in-memory state.
   last price, latency percentiles, and counts on insert, so the dashboard's longer
   and custom chart ranges query minutes, not the raw firehose. The live 3-minute
   view still reads raw. (DECISIONS.md D23/D24.)
+- **Optional durable queue.** Persistence can be routed through a NATS JetStream
+  log (ingest → stream → consumer → ClickHouse, acked only after insert) so a
+  crash can't lose rows that reached the log. Off by default; lightweight enough
+  to sit next to ClickHouse on a small box. (DECISIONS.md D25.)
 
 ## Quick start
 
@@ -163,6 +167,29 @@ HTTPS and forwards only the dashboard:
 ```sh
 docker compose --profile public up -d
 ```
+
+## Durable queue (optional)
+
+By default the venue handlers batch straight into ClickHouse, and a batch
+buffered in memory is lost if the process dies before it flushes. Setting
+`queue.enabled` puts a durable [NATS JetStream](https://docs.nats.io/nats-concepts/jetstream)
+log in between: ingest publishes normalized trades and book updates to a
+work-queue stream, and a consumer drains them into ClickHouse, acking each batch
+only after the insert succeeds. A crash between insert and ack redelivers the
+batch (at-least-once), so rows that reached the log are never lost. The
+dashboard's live views read the in-memory registry, not the log, so they're
+unaffected.
+
+```yaml
+queue:
+  enabled: true
+  url: nats://nats:4222
+  stream: TICKS
+```
+
+The compose file includes a memory-capped NATS service. NATS was chosen over
+Kafka/Redpanda deliberately: at ~1k msgs/sec on a 2 GB box it gives the same
+durable-log semantics in tens of MB instead of ~1 GB. See DECISIONS.md D25.
 
 ## Deploying to a VPS
 
