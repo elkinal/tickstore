@@ -965,16 +965,21 @@ attachHover("basisChart", renderBasis);
 attachHover("latChart", renderLatency);
 attachHover("rateChart", renderThroughput);
 
-// Steady render tick: the live charts otherwise only redraw when a data message
-// lands (price ~2×/s, latency/throughput ~every 2s), so the time window sat
-// still between messages and only moved when the cursor forced a redraw. Redraw
-// the visible live charts a few times a second so the window scrolls smoothly.
-// Non-live ranges refresh on their own fetch timer, and hidden tabs are skipped.
-setInterval(() => {
-  if(document.hidden || !isLive()) return;
+// Animation loop: the live charts otherwise only redraw when a data message
+// lands (price ~2×/s, latency/throughput ~every 2s), so between messages the
+// time window sat still. Redrawing on requestAnimationFrame scrolls it smoothly
+// at the display's refresh rate (vsync), so motion is continuous rather than
+// stepping. requestAnimationFrame is naturally paused in background tabs; we also
+// skip non-live ranges (they refresh on their own fetch timer) and hidden tabs.
+let lastFrame = 0;
+function animLoop(ts){
+  requestAnimationFrame(animLoop);
+  if(document.hidden || !isLive() || ts - lastFrame < 24) return; // cap ~40fps
+  lastFrame = ts;
   if(!$("tab-market").hidden) renderPrice();
   if(!$("tab-tech").hidden){ renderBasis(); renderLatency(); renderThroughput(); }
-}, 250);
+}
+requestAnimationFrame(animLoop);
 
 </script>
 </body>
