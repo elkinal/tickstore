@@ -534,6 +534,25 @@ function nearest(arr, t){
   return best;
 }
 
+// niceScale picks round axis bounds + step (1/2/5 × 10ⁿ) covering [lo, hi], so
+// ticks land on clean numbers instead of raw data extremes. axisNum formats a
+// tick value without trailing-zero noise.
+function niceNum(range, round){
+  if(range <= 0) return 1;
+  const exp = Math.floor(Math.log10(range)), f = range / Math.pow(10, exp);
+  const nf = round ? (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10)
+                   : (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10);
+  return nf * Math.pow(10, exp);
+}
+function niceScale(lo, hi, maxTicks){
+  const step = niceNum(niceNum(hi - lo, false) / Math.max(1, maxTicks - 1), true);
+  return { min: Math.floor(lo/step)*step, max: Math.ceil(hi/step)*step, step };
+}
+function axisNum(p){
+  const n = Math.abs(p) < 1e-9 ? 0 : p;
+  return Number.isInteger(n) ? n.toLocaleString("en-US") : (+n.toFixed(2)).toLocaleString("en-US", {maximumFractionDigits: 2});
+}
+
 // drawChart renders one line chart into svgId. cfg.series is [{name,color,pts}];
 // fmtLbl formats y-axis labels and fmtVal formats hover values. zeroFloor pins
 // the y-axis to 0 (right for latency/spread, wrong for price). One renderer keeps
@@ -556,15 +575,19 @@ function drawChart(svgId, cfg){
   const tMax = cfg.tMax || now;
   const tMin = cfg.tMin != null ? cfg.tMin : Math.min(Math.max(tMax - windowMs, tOldest), tMax - 1000);
   if(pMin===pMax){ pMin-=1; pMax+=1; }
-  const gp=(pMax-pMin)*0.12 || 1;
-  if(cfg.zeroFloor && pMin >= 0){ pMin = 0; pMax += gp; }
-  else { pMin -= gp; pMax += gp; }
+  // Round the y-axis to nice bounds/step so ticks are clean numbers, not raw
+  // data extremes. zeroFloor pins the base to 0 (right for latency/spread/rate).
+  const gp=(pMax-pMin)*0.08 || 1;
+  const lo = (cfg.zeroFloor && pMin >= 0) ? 0 : pMin - gp;
+  const sc = niceScale(lo, pMax + gp, 5);
+  pMin = sc.min; pMax = sc.max;
   const clampT = t => t < tMin ? tMin : (t > tMax ? tMax : t);
   const X = t => padL + (clampT(t)-tMin)/(tMax-tMin) * (W-padL-padR);
   const Y = p => padT + (1-(p-pMin)/(pMax-pMin)) * (H-padT-padB);
   let h="";
-  for(let i=0;i<=4;i++){
-    const p = pMin+(pMax-pMin)*i/4, y=Y(p);
+  const nT = Math.max(1, Math.round((pMax-pMin)/sc.step));
+  for(let i=0;i<=nT;i++){
+    const p = pMin + i*sc.step, y=Y(p);
     h += `<line class="pc-grid" x1="${padL}" y1="${y.toFixed(1)}" x2="${W-padR}" y2="${y.toFixed(1)}"/>`;
     h += `<text class="pc-lbl" x="6" y="${(y+3.5).toFixed(1)}">${cfg.fmtLbl(p)}</text>`;
   }
@@ -642,22 +665,22 @@ function renderLegendEl(elId, series, fmt){
 function venueSeries(store){ return VENUES.map(v => ({ name: v, color: VENUE_COLOR[v], pts: (store[v] || []) })); }
 function renderPrice(){
   const series = venueSeries((isLive() ? priceHist : rgPrice)[chartAsset] || {});
-  drawChart("priceChart", { series, fmtLbl: fmtPrice, fmtVal: fmtPrice, ...rangeCfg() });
+  drawChart("priceChart", { series, fmtLbl: axisNum, fmtVal: fmtPrice, ...rangeCfg() });
   renderLegendEl("chartLegend", series, fmtPrice);
 }
 function renderBasis(){
   const series = [{ name: "spread", color: "var(--accent)", pts: (isLive() ? basisHist : rgBasis)[chartAsset] || [] }];
-  drawChart("basisChart", { series, zeroFloor: true, area: true, fmtLbl: fmtUsd, fmtVal: fmtUsd, ...rangeCfg() });
+  drawChart("basisChart", { series, zeroFloor: true, area: true, fmtLbl: p => "$" + axisNum(p), fmtVal: fmtUsd, ...rangeCfg() });
   renderLegendEl("basisLegend", series, fmtUsd);
 }
 function renderLatency(){
   const series = venueSeries((isLive() ? latHist : rgLat)[latMetric] || {});
-  drawChart("latChart", { series, zeroFloor: true, fmtLbl: p => Math.round(p) + " ms", fmtVal: fmtMs, ...rangeCfg() });
+  drawChart("latChart", { series, zeroFloor: true, fmtLbl: p => axisNum(p) + " ms", fmtVal: fmtMs, ...rangeCfg() });
   renderLegendEl("latLegend", series, fmtMs);
 }
 function renderThroughput(){
   const series = venueSeries((isLive() ? rateHist : rgRate)[rateSource] || {});
-  drawChart("rateChart", { series, zeroFloor: true, fmtLbl: p => Math.round(p) + "/s", fmtVal: fmtRate, ...rangeCfg() });
+  drawChart("rateChart", { series, zeroFloor: true, fmtLbl: p => axisNum(p) + "/s", fmtVal: fmtRate, ...rangeCfg() });
   renderLegendEl("rateLegend", series, fmtRate);
 }
 function renderTechnical(){ renderPrice(); renderBasis(); renderLatency(); renderThroughput(); }
