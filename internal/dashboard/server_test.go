@@ -3,6 +3,8 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -140,5 +142,75 @@ func TestQueryInt(t *testing.T) {
 				t.Errorf("queryInt(%q) = %d, want %d", tt.url, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestBucketFor checks the custom-range bucket picker snaps to friendly steps
+// and lands the raw/rollup split (>= 60s uses the rollups) where expected.
+func TestBucketFor(t *testing.T) {
+	tests := []struct{ span, want int }{
+		{180, 2},       // 3-minute custom span -> sub-minute raw bucket
+		{3600, 60},     // 1h -> 1-minute rollup bucket
+		{7200, 120},    // 2h
+		{86400, 1800},  // 24h
+		{259200, 3600}, // 3 days
+	}
+	for _, tt := range tests {
+		if got := bucketFor(tt.span); got != tt.want {
+			t.Errorf("bucketFor(%d) = %d, want %d", tt.span, got, tt.want)
+		}
+	}
+}
+
+// TestHistoryEndpoint covers the /api/history handler for a preset range, a
+// custom from/to window, and the invalid (from >= to) case.
+func TestHistoryEndpoint(t *testing.T) {
+	h := newTestHandler()
+	decode := func(body []byte) struct {
+		Price      []sink.PricePoint   `json:"price"`
+		Latency    []sink.LatencyPoint `json:"latency"`
+		Throughput []sink.RatePoint    `json:"throughput"`
+		FromMs     int64               `json:"from_ms"`
+		ToMs       int64               `json:"to_ms"`
+	} {
+		var r struct {
+			Price      []sink.PricePoint   `json:"price"`
+			Latency    []sink.LatencyPoint `json:"latency"`
+			Throughput []sink.RatePoint    `json:"throughput"`
+			FromMs     int64               `json:"from_ms"`
+			ToMs       int64               `json:"to_ms"`
+		}
+		if err := json.Unmarshal(body, &r); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return r
+	}
+
+	// Preset range: all three series present, from < to.
+	w := httptest.NewRecorder()
+	h.history(w, httptest.NewRequest("GET", "/api/history?range=6h", nil))
+	got := decode(w.Body.Bytes())
+	if len(got.Price) != 1 || len(got.Latency) != 1 || len(got.Throughput) != 1 {
+		t.Fatalf("preset series counts: %s", w.Body.String())
+	}
+	if !(got.FromMs < got.ToMs) {
+		t.Fatalf("preset from/to = %d/%d", got.FromMs, got.ToMs)
+	}
+
+	// Custom window: the returned bounds echo the request (to clamped to <= now).
+	from := time.Now().Add(-2 * time.Hour).UnixMilli()
+	to := time.Now().Add(-1 * time.Hour).UnixMilli()
+	wc := httptest.NewRecorder()
+	h.history(wc, httptest.NewRequest("GET", fmt.Sprintf("/api/history?from=%d&to=%d", from, to), nil))
+	c := decode(wc.Body.Bytes())
+	if c.FromMs != from || c.ToMs != to {
+		t.Fatalf("custom bounds = %d/%d, want %d/%d", c.FromMs, c.ToMs, from, to)
+	}
+
+	// Invalid window (from >= to) is rejected.
+	wb := httptest.NewRecorder()
+	h.history(wb, httptest.NewRequest("GET", fmt.Sprintf("/api/history?from=%d&to=%d", to, from), nil))
+	if wb.Code != http.StatusBadRequest {
+		t.Fatalf("bad range status = %d, want 400", wb.Code)
 	}
 }

@@ -167,7 +167,7 @@
     .trow { grid-template-columns: 54px 66px 40px 1fr auto; }
     .trow .sym { display: none; }
   }
-  /* Cross-venue charts (price, spread, latency all share .pc) */
+  /* Cross-venue charts (price, spread, latency, throughput all share .pc) */
   .chart-panel { margin-top: 12px; }
   .chartwrap { padding: 8px 10px 2px; }
   .pc { width: 100%; height: auto; display: block; cursor: crosshair; }
@@ -482,7 +482,7 @@ let rateSource = "trades"; // trades/book selector for the throughput chart
 // per-minute rollups) and refreshed on a timer. bucketMs sets the stale/label
 // scale in drawChart; refreshMs paces the re-fetch.
 const RANGES = {
-  "3m":  { sec: 180,   bucketMs: 3000,   live: true },
+  "3m":  { sec: 180,   bucketMs: 3000 },
   "1h":  { sec: 3600,  bucketMs: 60000,  refreshMs: 10000 },
   "6h":  { sec: 21600, bucketMs: 300000, refreshMs: 30000 },
   "24h": { sec: 86400, bucketMs: 900000, refreshMs: 60000 },
@@ -546,9 +546,9 @@ function axisNum(p){
 
 // drawChart renders one line chart into svgId. cfg.series is [{name,color,pts}];
 // fmtLbl formats y-axis labels and fmtVal formats hover values. zeroFloor pins
-// the y-axis to 0 (right for latency/spread, wrong for price). One renderer keeps
-// all three charts pixel-consistent, including the flat edge-extension so every
-// line spans the full window even when a venue's samples start late.
+// the y-axis to 0 (right for latency/spread/rate, wrong for price). One renderer
+// keeps all four charts pixel-consistent, including the flat edge-extension so
+// every line spans the full window even when a venue's samples start late.
 function drawChart(svgId, cfg){
   const svg = $(svgId); if(!svg) return;
   svg.setAttribute("viewBox", `0 0 ${CHART_W} ${CHART_H}`);

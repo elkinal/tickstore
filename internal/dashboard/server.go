@@ -232,7 +232,7 @@ func (h *handler) depth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, depthResponse{Venue: venue, Symbol: symbol, Bids: bids, Asks: asks, Found: ok})
 }
 
-// priceHistory returns the last ~3 minutes of per-venue BTC prices from
+// priceHistory returns the last ~3 minutes of per-venue BTC and ETH prices from
 // ClickHouse, so the dashboard's price chart loads already populated.
 func (h *handler) priceHistory(w http.ResponseWriter, r *http.Request) {
 	to := time.Now()

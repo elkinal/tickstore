@@ -114,49 +114,6 @@ func (c *ClickHouse) RecentTrades(ctx context.Context, sinceNanos int64, limit i
 	return out, nil
 }
 
-// RecentBookUpdates returns up to limit book updates received after sinceNanos,
-// oldest first. sinceNanos == 0 returns the most recent updates.
-func (c *ClickHouse) RecentBookUpdates(ctx context.Context, sinceNanos int64, limit int) ([]FeedRow, error) {
-	const q = `
-		SELECT ts_received, venue, symbol, side, price, size, is_snapshot
-		FROM tickstore.book_updates
-		WHERE ts_received > fromUnixTimestamp64Nano(?)
-		ORDER BY ts_received DESC
-		LIMIT ?`
-	rows, err := c.conn.Query(ctx, q, sinceNanos, limit)
-	if err != nil {
-		return nil, fmt.Errorf("clickhouse: recent book updates: %w", err)
-	}
-	defer rows.Close()
-
-	var out []FeedRow
-	for rows.Next() {
-		var (
-			ts          time.Time
-			venue, sym  string
-			side        string
-			price, size int64
-			snap        uint8
-		)
-		if err := rows.Scan(&ts, &venue, &sym, &side, &price, &size, &snap); err != nil {
-			return nil, fmt.Errorf("clickhouse: scan book update: %w", err)
-		}
-		out = append(out, FeedRow{
-			TsNanos: ts.UnixNano(),
-			Time:    ts.Format("15:04:05"),
-			Venue:   venue, Symbol: sym, Side: side,
-			Size:       norm.FormatFixed(size, norm.SizeDecimals),
-			Price:      norm.FormatFixed(price, norm.PriceDecimals),
-			IsSnapshot: snap == 1,
-		})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	reverse(out)
-	return out, nil
-}
-
 func reverse(rows []FeedRow) {
 	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
 		rows[i], rows[j] = rows[j], rows[i]
