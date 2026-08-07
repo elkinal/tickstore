@@ -55,9 +55,16 @@ reconstructed book also feeds the live dashboard from in-memory state.
   `book_updates` table, about 0.6 GB/day, bounded by a 30-day `TTL`. Off by
   default because it is tens of times the volume of trades (~500/sec vs ~14/sec
   across the six default symbols).
-- **Live dashboard.** A self-contained web UI (cross-venue quote grid, depth
-  ladder, time & sales tape) that reads the engine's in-memory book state and
-  streams over Server-Sent Events instead of polling.
+- **Live dashboard.** A self-contained web UI with a **Market** tab (cross-venue
+  quote grid, depth ladder, time & sales, and a cross-venue price chart) and a
+  **Technical** tab (cross-venue spread, ingest latency p50/p99, ingest
+  throughput). A shared time-range control (live 3 min / 1h / 6h / 24h / custom
+  date range) drives every chart; it reads in-memory state and streams over
+  Server-Sent Events instead of polling.
+- **Per-minute rollups.** `trades_1m` / `book_1m` materialized views pre-aggregate
+  last price, latency percentiles, and counts on insert, so the dashboard's longer
+  and custom chart ranges query minutes, not the raw firehose. The live 3-minute
+  view still reads raw. (DECISIONS.md D23/D24.)
 
 ## Quick start
 
@@ -122,11 +129,26 @@ external assets, no build step). It reads the engine's in-memory book state, so
 it stays readable regardless of feed volume, and pushes updates over a single
 Server-Sent Events connection instead of polling.
 
+One shared time-range control — **live 3 min / 1h / 6h / 24h / custom** — drives
+every chart. The live view streams over SSE; the longer ranges and the custom
+date/time picker are served from the per-minute rollup views (`trades_1m`,
+`book_1m`), so a day or a week is a cheap query instead of a firehose scan.
+
+**Market** tab — the real-time view:
+
 - **Quotes:** best bid/ask per venue, grouped by market, best-across-venues
   highlighted, with a live last-trade tick.
 - **Order book:** a depth ladder with cumulative-size bars for a selected market.
 - **Time & sales:** the trade tape, with large prints highlighted.
-- **Health:** total rows, storage, live insert rate, and book gaps/resyncs.
+- **Cross-venue price:** BTC/ETH last price per venue as a line chart.
+- **Health tiles:** total rows, storage, live insert rate, and book gaps/resyncs.
+
+**Technical** tab — derived / observability charts:
+
+- **USD venue spread:** the price gap between same-currency venues (the arbitrage
+  signal), with a gradient area fill.
+- **Ingest latency:** exchange→stored p50 / p99 per venue.
+- **Ingest throughput:** rows/sec per venue, for trades or the book firehose.
 
 By default it binds to localhost, so reach it over an SSH tunnel:
 
