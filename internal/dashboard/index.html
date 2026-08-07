@@ -543,6 +543,20 @@ function axisNum(p){
   const n = Math.abs(p) < 1e-9 ? 0 : p;
   return Number.isInteger(n) ? n.toLocaleString("en-US") : (+n.toFixed(2)).toLocaleString("en-US", {maximumFractionDigits: 2});
 }
+// Format an x-axis tick (UTC), scaled to the window so labels are unambiguous
+// and clearly increasing: HH:MM for sub-day windows (a 3-min window reads
+// 04:22, 04:23, 04:24, 04:25 — not the mm:ss "22:24, 23:24, 24:24" that looks
+// like broken hours), date+time for multi-day, date only for very long ranges,
+// and HH:MM:SS only when ticks land under a minute apart (tiny custom windows).
+function fmtAxisTime(ms, span){
+  const d = new Date(ms);
+  const mo = pad(d.getUTCMonth()+1), da = pad(d.getUTCDate());
+  const hh = pad(d.getUTCHours()), mi = pad(d.getUTCMinutes()), ss = pad(d.getUTCSeconds());
+  if(span >= 5*864e5)  return `${mo}-${da}`;             // >= 5 days: date only
+  if(span >= 12*36e5)  return `${mo}-${da} ${hh}:${mi}`; // >= 12h: date + time (spans midnight)
+  if(span/3 >= 60000)  return `${hh}:${mi}`;             // minute-plus ticks: HH:MM
+  return `${hh}:${mi}:${ss}`;                            // sub-minute ticks: HH:MM:SS
+}
 
 // drawChart renders one line chart into svgId. cfg.series is [{name,color,pts}];
 // fmtLbl formats y-axis labels and fmtVal formats hover values. zeroFloor pins
@@ -582,16 +596,12 @@ function drawChart(svgId, cfg){
     h += `<line class="pc-grid" x1="${padL}" y1="${y.toFixed(1)}" x2="${W-padR}" y2="${y.toFixed(1)}"/>`;
     h += `<text class="pc-lbl" x="6" y="${(y+3.5).toFixed(1)}">${cfg.fmtLbl(p)}</text>`;
   }
-  // X-axis time ticks (UTC), scaled to the window: mm:ss for short, HH:MM for
-  // hours, MM-DD for multi-day custom ranges.
+  // X-axis time ticks (UTC), scaled to the window (see fmtAxisTime).
   const span = tMax - tMin;
   for(let i=0;i<=3;i++){
-    const f = i/3, tx = padL + f*(W-padL-padR), d = new Date(tMin + f*span);
+    const f = i/3, tx = padL + f*(W-padL-padR);
     const anchor = i===0 ? "start" : (i===3 ? "end" : "middle");
-    const lbl = span >= 2*864e5 ? `${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`
-      : span >= 2*36e5 ? `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`
-      : `${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
-    h += `<text class="pc-xlbl" x="${tx.toFixed(1)}" y="${(H-6).toFixed(1)}" text-anchor="${anchor}">${lbl}</text>`;
+    h += `<text class="pc-xlbl" x="${tx.toFixed(1)}" y="${(H-6).toFixed(1)}" text-anchor="${anchor}">${fmtAxisTime(tMin + f*span, span)}</text>`;
   }
   const anim = cfg.animate, fadeCls = anim ? ' class="afade"' : '', yb = Y(pMin);
   let defs = "";
