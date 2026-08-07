@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/elkinal/tickstore/internal/live"
 	"github.com/elkinal/tickstore/internal/sink"
@@ -20,13 +21,13 @@ func (fakeStore) TableStats(context.Context) ([]sink.TableStat, error) {
 func (fakeStore) RecentTrades(_ context.Context, since int64, _ int) ([]sink.FeedRow, error) {
 	return []sink.FeedRow{{TsNanos: 42, Time: "12:00:00", Venue: "okx", Symbol: "BTC-USDT", Side: "buy", Size: "0.5", Price: "64000"}}, nil
 }
-func (fakeStore) PriceHistory(_ context.Context, _, _ int) ([]sink.PricePoint, error) {
+func (fakeStore) PriceHistory(_ context.Context, _, _ time.Time, _ int) ([]sink.PricePoint, error) {
 	return []sink.PricePoint{{Venue: "coinbase", Base: "BTC", Quote: "USD", TMs: 1, Price: 64000}}, nil
 }
-func (fakeStore) LatencyHistory(_ context.Context, _, _ int) ([]sink.LatencyPoint, error) {
+func (fakeStore) LatencyHistory(_ context.Context, _, _ time.Time, _ int) ([]sink.LatencyPoint, error) {
 	return []sink.LatencyPoint{{Venue: "coinbase", TMs: 1, P50: 55, P99: 97}}, nil
 }
-func (fakeStore) ThroughputHistory(_ context.Context, _, _ int) ([]sink.RatePoint, error) {
+func (fakeStore) ThroughputHistory(_ context.Context, _, _ time.Time, _ int) ([]sink.RatePoint, error) {
 	return []sink.RatePoint{{Venue: "coinbase", Source: "trades", TMs: 1, Rate: 14}}, nil
 }
 

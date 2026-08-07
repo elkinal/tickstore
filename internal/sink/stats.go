@@ -182,12 +182,12 @@ type PricePoint struct {
 func rollup(bucketSec int) bool { return bucketSec >= 60 }
 
 // PriceHistory returns the last-trade price per venue and asset (BTC and ETH)
-// over the last windowSec seconds, bucketed to bucketSec. It backs both the
-// live price chart and its longer ranges: sub-minute buckets read raw trades,
-// while minute-plus buckets merge the trades_1m rollup's argMax states (the last
-// price in each coarse bucket). Symbols are listed explicitly because each venue
-// names them differently (BTC-USD, BTC/USD, BTC-USDT, and the ETH equivalents).
-func (c *ClickHouse) PriceHistory(ctx context.Context, windowSec, bucketSec int) ([]PricePoint, error) {
+// in [from, to], bucketed to bucketSec. It backs the live price chart, its longer
+// ranges, and custom date ranges: sub-minute buckets read raw trades, while
+// minute-plus buckets merge the trades_1m rollup's argMax states (the last price
+// in each coarse bucket). Symbols are listed explicitly because each venue names
+// them differently (BTC-USD, BTC/USD, BTC-USDT, and the ETH equivalents).
+func (c *ClickHouse) PriceHistory(ctx context.Context, from, to time.Time, bucketSec int) ([]PricePoint, error) {
 	const raw = `
 		SELECT venue,
 		       multiIf(startsWith(symbol, 'BTC'), 'BTC', startsWith(symbol, 'ETH'), 'ETH', 'OTHER') AS base,
@@ -196,7 +196,7 @@ func (c *ClickHouse) PriceHistory(ctx context.Context, windowSec, bucketSec int)
 		       argMax(price, ts_received) / 1e8 AS price
 		FROM tickstore.trades
 		WHERE symbol IN ('BTC-USD', 'BTC/USD', 'BTC-USDT', 'ETH-USD', 'ETH/USD', 'ETH-USDT')
-		  AND ts_received > now() - toIntervalSecond(?)
+		  AND ts_received BETWEEN ? AND ?
 		GROUP BY venue, base, quote, t_ms
 		ORDER BY t_ms`
 	const mv = `
@@ -207,14 +207,14 @@ func (c *ClickHouse) PriceHistory(ctx context.Context, windowSec, bucketSec int)
 		       argMaxMerge(close_state) / 1e8 AS price
 		FROM tickstore.trades_1m
 		WHERE symbol IN ('BTC-USD', 'BTC/USD', 'BTC-USDT', 'ETH-USD', 'ETH/USD', 'ETH-USDT')
-		  AND minute > now() - toIntervalSecond(?)
+		  AND minute BETWEEN ? AND ?
 		GROUP BY venue, base, quote, t_ms
 		ORDER BY t_ms`
 	q := raw
 	if rollup(bucketSec) {
 		q = mv
 	}
-	rows, err := c.conn.Query(ctx, q, bucketSec, windowSec)
+	rows, err := c.conn.Query(ctx, q, bucketSec, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: price history: %w", err)
 	}
@@ -248,7 +248,7 @@ type LatencyPoint struct {
 // chart, which shows how quickly each venue's feed reaches the pipeline. The
 // diff is clamped to a sane range so a venue with a missing/garbage exchange
 // timestamp can't distort the scale.
-func (c *ClickHouse) LatencyHistory(ctx context.Context, windowSec, bucketSec int) ([]LatencyPoint, error) {
+func (c *ClickHouse) LatencyHistory(ctx context.Context, from, to time.Time, bucketSec int) ([]LatencyPoint, error) {
 	const raw = `
 		SELECT venue,
 		       toUInt64(toUnixTimestamp(toStartOfInterval(ts_received, toIntervalSecond(?)))) * 1000 AS t_ms,
@@ -257,7 +257,7 @@ func (c *ClickHouse) LatencyHistory(ctx context.Context, windowSec, bucketSec in
 			SELECT venue, ts_received,
 			       (toUnixTimestamp64Nano(ts_received) - toUnixTimestamp64Nano(ts_exchange)) / 1e6 AS lat_ms
 			FROM tickstore.trades
-			WHERE ts_received > now() - toIntervalSecond(?)
+			WHERE ts_received BETWEEN ? AND ?
 		)
 		WHERE lat_ms >= 0 AND lat_ms < 60000
 		GROUP BY venue, t_ms
@@ -267,14 +267,14 @@ func (c *ClickHouse) LatencyHistory(ctx context.Context, windowSec, bucketSec in
 		       toUInt64(toUnixTimestamp(toStartOfInterval(minute, toIntervalSecond(?)))) * 1000 AS t_ms,
 		       quantilesMerge(0.5, 0.99)(lat_state) AS q
 		FROM tickstore.trades_1m
-		WHERE minute > now() - toIntervalSecond(?)
+		WHERE minute BETWEEN ? AND ?
 		GROUP BY venue, t_ms
 		ORDER BY t_ms`
 	q := raw
 	if rollup(bucketSec) {
 		q = mv
 	}
-	rows, err := c.conn.Query(ctx, q, bucketSec, windowSec)
+	rows, err := c.conn.Query(ctx, q, bucketSec, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: latency history: %w", err)
 	}
@@ -311,20 +311,20 @@ type RatePoint struct {
 // seconds, bucketed to bucketSec. It feeds the dashboard's throughput chart —
 // the "how much" counterpart to the latency chart's "how fast" — and makes the
 // order-book firehose (many times the trade volume) visible.
-func (c *ClickHouse) ThroughputHistory(ctx context.Context, windowSec, bucketSec int) ([]RatePoint, error) {
+func (c *ClickHouse) ThroughputHistory(ctx context.Context, from, to time.Time, bucketSec int) ([]RatePoint, error) {
 	const raw = `
 		SELECT venue, 'trades' AS source,
 		       toUInt64(toUnixTimestamp(toStartOfInterval(ts_received, toIntervalSecond(?)))) * 1000 AS t_ms,
 		       count() / ? AS rate
 		FROM tickstore.trades
-		WHERE ts_received > now() - toIntervalSecond(?)
+		WHERE ts_received BETWEEN ? AND ?
 		GROUP BY venue, t_ms
 		UNION ALL
 		SELECT venue, 'book' AS source,
 		       toUInt64(toUnixTimestamp(toStartOfInterval(ts_received, toIntervalSecond(?)))) * 1000 AS t_ms,
 		       count() / ? AS rate
 		FROM tickstore.book_updates
-		WHERE ts_received > now() - toIntervalSecond(?)
+		WHERE ts_received BETWEEN ? AND ?
 		GROUP BY venue, t_ms
 		ORDER BY t_ms`
 	const mv = `
@@ -332,21 +332,21 @@ func (c *ClickHouse) ThroughputHistory(ctx context.Context, windowSec, bucketSec
 		       toUInt64(toUnixTimestamp(toStartOfInterval(minute, toIntervalSecond(?)))) * 1000 AS t_ms,
 		       countMerge(cnt_state) / ? AS rate
 		FROM tickstore.trades_1m
-		WHERE minute > now() - toIntervalSecond(?)
+		WHERE minute BETWEEN ? AND ?
 		GROUP BY venue, t_ms
 		UNION ALL
 		SELECT venue, 'book' AS source,
 		       toUInt64(toUnixTimestamp(toStartOfInterval(minute, toIntervalSecond(?)))) * 1000 AS t_ms,
 		       sum(cnt) / ? AS rate
 		FROM tickstore.book_1m
-		WHERE minute > now() - toIntervalSecond(?)
+		WHERE minute BETWEEN ? AND ?
 		GROUP BY venue, t_ms
 		ORDER BY t_ms`
 	q := raw
 	if rollup(bucketSec) {
 		q = mv
 	}
-	rows, err := c.conn.Query(ctx, q, bucketSec, bucketSec, windowSec, bucketSec, bucketSec, windowSec)
+	rows, err := c.conn.Query(ctx, q, bucketSec, bucketSec, from, to, bucketSec, bucketSec, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: throughput history: %w", err)
 	}

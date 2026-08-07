@@ -36,9 +36,9 @@ var indexHTML []byte
 type Store interface {
 	TableStats(ctx context.Context) ([]sink.TableStat, error)
 	RecentTrades(ctx context.Context, sinceNanos int64, limit int) ([]sink.FeedRow, error)
-	PriceHistory(ctx context.Context, windowSec, bucketSec int) ([]sink.PricePoint, error)
-	LatencyHistory(ctx context.Context, windowSec, bucketSec int) ([]sink.LatencyPoint, error)
-	ThroughputHistory(ctx context.Context, windowSec, bucketSec int) ([]sink.RatePoint, error)
+	PriceHistory(ctx context.Context, from, to time.Time, bucketSec int) ([]sink.PricePoint, error)
+	LatencyHistory(ctx context.Context, from, to time.Time, bucketSec int) ([]sink.LatencyPoint, error)
+	ThroughputHistory(ctx context.Context, from, to time.Time, bucketSec int) ([]sink.RatePoint, error)
 }
 
 // Live is the in-memory read side: current books and recent trades, for the
@@ -174,10 +174,12 @@ func (h *handler) stream(w http.ResponseWriter, r *http.Request) {
 			if s, err := h.buildStats(ctx); err == nil {
 				payload["stats"] = s
 			}
-			if lat, err := h.store.LatencyHistory(ctx, 180, 3); err == nil {
+			to := time.Now()
+			from := to.Add(-180 * time.Second) // the live 3-minute window
+			if lat, err := h.store.LatencyHistory(ctx, from, to, 3); err == nil {
 				payload["latency"] = lat
 			}
-			if rate, err := h.store.ThroughputHistory(ctx, 180, 3); err == nil {
+			if rate, err := h.store.ThroughputHistory(ctx, from, to, 3); err == nil {
 				payload["throughput"] = rate
 			}
 		}
@@ -233,7 +235,9 @@ func (h *handler) depth(w http.ResponseWriter, r *http.Request) {
 // priceHistory returns the last ~3 minutes of per-venue BTC prices from
 // ClickHouse, so the dashboard's price chart loads already populated.
 func (h *handler) priceHistory(w http.ResponseWriter, r *http.Request) {
-	pts, err := h.store.PriceHistory(r.Context(), 180, 2)
+	to := time.Now()
+	from := to.Add(-180 * time.Second)
+	pts, err := h.store.PriceHistory(r.Context(), from, to, 2)
 	if err != nil {
 		h.fail(w, "price history", err)
 		return
@@ -250,33 +254,73 @@ var rangeBuckets = map[string][2]int{
 	"24h": {86400, 900},
 }
 
+// bucketSteps are the friendly bucket sizes (seconds) a custom range snaps to.
+var bucketSteps = []int{1, 2, 3, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400}
+
+// bucketFor picks a bucket size for a custom span, targeting ~80 points and
+// snapping up to a friendly step. The raw-vs-rollup choice then follows from it.
+func bucketFor(spanSec int) int {
+	target := spanSec / 80
+	for _, s := range bucketSteps {
+		if target <= s {
+			return s
+		}
+	}
+	return bucketSteps[len(bucketSteps)-1]
+}
+
 // history serves a whole range of all three technical series (price, latency,
 // throughput) in one response, so switching the chart range is a single fetch.
-// The live 3-minute view is driven by the SSE stream instead; this backs the
-// longer ranges (and refreshes them on a timer).
+// It takes either a preset ?range= (window ending now) or a custom ?from=&to=
+// pair (unix ms); the live 3-minute view is driven by the SSE stream instead.
 func (h *handler) history(w http.ResponseWriter, r *http.Request) {
-	rb, ok := rangeBuckets[r.URL.Query().Get("range")]
-	if !ok {
-		rb = rangeBuckets["1h"]
+	q := r.URL.Query()
+	var from, to time.Time
+	var bucketSec int
+	if fs, ts := q.Get("from"), q.Get("to"); fs != "" && ts != "" {
+		fromMs, _ := strconv.ParseInt(fs, 10, 64)
+		toMs, _ := strconv.ParseInt(ts, 10, 64)
+		from, to = time.UnixMilli(fromMs), time.UnixMilli(toMs)
+		now := time.Now()
+		if to.After(now) {
+			to = now // can't chart the future
+		}
+		if from.Before(now.Add(-90 * 24 * time.Hour)) {
+			from = now.Add(-90 * 24 * time.Hour) // bound by the longest retention
+		}
+		if !from.Before(to) {
+			http.Error(w, "bad range", http.StatusBadRequest)
+			return
+		}
+		bucketSec = bucketFor(int(to.Sub(from).Seconds()))
+	} else {
+		rb, ok := rangeBuckets[q.Get("range")]
+		if !ok {
+			rb = rangeBuckets["1h"]
+		}
+		to = time.Now()
+		from = to.Add(-time.Duration(rb[0]) * time.Second)
+		bucketSec = rb[1]
 	}
-	windowSec, bucketSec := rb[0], rb[1]
 	ctx := r.Context()
-	price, err := h.store.PriceHistory(ctx, windowSec, bucketSec)
+	price, err := h.store.PriceHistory(ctx, from, to, bucketSec)
 	if err != nil {
 		h.fail(w, "history price", err)
 		return
 	}
-	lat, err := h.store.LatencyHistory(ctx, windowSec, bucketSec)
+	lat, err := h.store.LatencyHistory(ctx, from, to, bucketSec)
 	if err != nil {
 		h.fail(w, "history latency", err)
 		return
 	}
-	rate, err := h.store.ThroughputHistory(ctx, windowSec, bucketSec)
+	rate, err := h.store.ThroughputHistory(ctx, from, to, bucketSec)
 	if err != nil {
 		h.fail(w, "history throughput", err)
 		return
 	}
 	writeJSON(w, map[string]any{
+		"from_ms":    from.UnixMilli(),
+		"to_ms":      to.UnixMilli(),
 		"price":      price,
 		"latency":    lat,
 		"throughput": rate,

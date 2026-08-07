@@ -123,7 +123,22 @@
   .rsel { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; flex: none; }
   .rsel::before { content: "range"; color: var(--muted); font-size: 9.5px; letter-spacing: .4px; text-transform: uppercase; margin-right: 3px; }
   /* One global range control, right-aligned on the tab bar. */
+  .tabs { position: relative; }
   .tabs .rsel { margin-left: auto; align-self: center; padding-bottom: 6px; }
+  /* Custom date/time popover, anchored under the right end of the tab bar. */
+  .custompop { position: absolute; right: 0; top: 100%; z-index: 70; margin-top: 4px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 11px 12px; box-shadow: 0 10px 30px rgba(0,0,0,.5); min-width: 232px; }
+  .custompop[hidden] { display: none; }
+  .cp-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+  .cp-row span { color: var(--dim); font-size: 11px; }
+  .custompop input { font: inherit; font-size: 11.5px; color: var(--text); background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px; color-scheme: dark; }
+  .cp-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
+  .cp-tz { color: var(--muted); font-size: 10px; letter-spacing: .4px; }
+  .cp-foot button { font: inherit; font-size: 11px; color: var(--bg); background: var(--accent);
+    border: none; border-radius: 5px; padding: 4px 12px; cursor: pointer; font-weight: 600; }
+  .cp-foot button:hover { filter: brightness(1.08); }
   .lrow { position: relative; display: grid; grid-template-columns: 1fr 1fr; padding: 1.5px 13px; z-index: 0; }
   .lrow .bar { position: absolute; top: 1px; bottom: 1px; right: 0; z-index: -1; border-radius: 1px; }
   .lrow.ask .bar { background: var(--sell-bg); } .lrow.bid .bar { background: var(--buy-bg); }
@@ -211,6 +226,11 @@
     <button data-tab="market" class="on">Market</button>
     <button data-tab="tech">Technical</button>
     <div class="rsel" id="rangeSel"></div>
+    <div class="custompop" id="customPop" hidden>
+      <label class="cp-row"><span>From</span><input type="datetime-local" id="cFrom" step="1"></label>
+      <label class="cp-row"><span>To</span><input type="datetime-local" id="cTo" step="1"></label>
+      <div class="cp-foot"><span class="cp-tz">UTC</span><button id="cApply">Apply</button></div>
+    </div>
   </nav>
 
   <div class="tabpane" id="tab-market">
@@ -479,6 +499,7 @@ const RANGES = {
 const RANGE_KEYS = ["3m", "1h", "6h", "24h"];
 const RANGE_NOTE = { "3m": "last 3 min · live", "1h": "last hour", "6h": "last 6 hours", "24h": "last 24 hours" };
 let chartRange = "3m";
+let customFrom = 0, customTo = 0; // ms epoch bounds when chartRange === "custom"
 let rangeTimer = null;
 let drawAnim = false; // one-shot: draw-in animation on the next render (range/tab change)
 // Ranged buffers, filled from /api/history — same shapes as the live stores so
@@ -490,6 +511,12 @@ const rgRate = { trades: { coinbase: [], kraken: [], okx: [] }, book: { coinbase
 const isLive = () => chartRange === "3m";
 // Extra drawChart config for the current range: window width and stale cutoff.
 function rangeCfg(){
+  if(chartRange === "custom"){
+    const span = Math.max(1000, customTo - customFrom);
+    // Fixed past window: pin both edges, and never mark stale (data legitimately
+    // ends at customTo, which may be days ago).
+    return { windowMs: span, tMin: customFrom, tMax: customTo, staleMs: span, animate: drawAnim };
+  }
   const r = RANGES[chartRange];
   return { windowMs: r.sec * 1000, staleMs: Math.max(STALE_MS, 3 * r.bucketMs), animate: drawAnim };
 }
@@ -524,7 +551,10 @@ function drawChart(svgId, cfg){
   }
   if(!any){ svg.innerHTML=""; return; }
   const windowMs = cfg.windowMs || CHART_WINDOW_MS, staleMs = cfg.staleMs || STALE_MS;
-  const tMax = now, tMin = Math.min(Math.max(now - windowMs, tOldest), now - 1000);
+  // tMax is the window's end — "now" for live/preset ranges, but the chosen end
+  // for a custom past range (so the data isn't squashed against the left edge).
+  const tMax = cfg.tMax || now;
+  const tMin = cfg.tMin != null ? cfg.tMin : Math.min(Math.max(tMax - windowMs, tOldest), tMax - 1000);
   if(pMin===pMax){ pMin-=1; pMax+=1; }
   const gp=(pMax-pMin)*0.12 || 1;
   if(cfg.zeroFloor && pMin >= 0){ pMin = 0; pMax += gp; }
@@ -538,13 +568,15 @@ function drawChart(svgId, cfg){
     h += `<line class="pc-grid" x1="${padL}" y1="${y.toFixed(1)}" x2="${W-padR}" y2="${y.toFixed(1)}"/>`;
     h += `<text class="pc-lbl" x="6" y="${(y+3.5).toFixed(1)}">${cfg.fmtLbl(p)}</text>`;
   }
-  // X-axis time ticks (UTC). Short windows read mm:ss; hour-plus windows read
-  // HH:MM so a whole day's ticks stay distinct.
-  const hhmm = windowMs >= 2*3600*1000;
+  // X-axis time ticks (UTC), scaled to the window: mm:ss for short, HH:MM for
+  // hours, MM-DD for multi-day custom ranges.
+  const span = tMax - tMin;
   for(let i=0;i<=3;i++){
-    const f = i/3, tx = padL + f*(W-padL-padR), tt = tMin + f*(tMax-tMin), d = new Date(tt);
+    const f = i/3, tx = padL + f*(W-padL-padR), d = new Date(tMin + f*span);
     const anchor = i===0 ? "start" : (i===3 ? "end" : "middle");
-    const lbl = hhmm ? `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}` : `${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+    const lbl = span >= 2*864e5 ? `${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`
+      : span >= 2*36e5 ? `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`
+      : `${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
     h += `<text class="pc-xlbl" x="${tx.toFixed(1)}" y="${(H-6).toFixed(1)}" text-anchor="${anchor}">${lbl}</text>`;
   }
   const anim = cfg.animate, fadeCls = anim ? ' class="afade"' : '', yb = Y(pMin);
@@ -556,7 +588,7 @@ function drawChart(svgId, cfg){
     // feed is fresh — a stalled venue stops short of the edge (with a hollow end
     // dot) instead of drawing a flat line that looks like a steady price.
     const first = pts[0], last = pts[pts.length-1];
-    const stale = (now - last.t) > staleMs;
+    const stale = (tMax - last.t) > staleMs;
     const rx = stale ? X(last.t) : X(tMax);
     const coords = [`${X(tMin).toFixed(1)},${Y(first.p).toFixed(1)}`];
     for(const pt of pts) coords.push(`${X(pt.t).toFixed(1)},${Y(pt.p).toFixed(1)}`);
@@ -649,18 +681,55 @@ function setAssetTitles(){
 // The range selectors on all four charts are synced to one chartRange. "3m" is
 // the live view (SSE); the longer ranges fetch a full window from /api/history
 // and refresh on a timer.
-const RANGE_HOSTS = ["rangeSel"]; // one global control on the tab bar drives all charts
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+// datetime-local inputs are wall-clock; treat them as UTC to match the dashboard.
+function toUTCInput(ms){ const d = new Date(ms); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`; }
+function parseUTCInput(v){ if(!v) return NaN; const [dp, tp] = v.split("T"); if(!tp) return NaN; const [Y,M,D] = dp.split("-").map(Number); const p = tp.split(":").map(Number); return Date.UTC(Y, M-1, D, p[0]||0, p[1]||0, p[2]||0); }
+function fmtStamp(ms){ const d = new Date(ms); return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`; }
+
 function markRangeSels(){
-  for(const id of RANGE_HOSTS){ const h=$(id); if(!h) continue; for(const b of h.children) b.classList.toggle("on", b.dataset.r===chartRange); }
-  const pn = $("priceNote"); if(pn) pn.textContent = RANGE_NOTE[chartRange];
+  const h = $("rangeSel"); if(h) for(const b of h.children) b.classList.toggle("on", b.dataset.r === chartRange);
+  const pn = $("priceNote");
+  if(pn) pn.textContent = chartRange === "custom" ? `${fmtStamp(customFrom)} → ${fmtStamp(customTo)} UTC` : RANGE_NOTE[chartRange];
 }
 function buildRangeSels(){
-  for(const id of RANGE_HOSTS){
-    const h = $(id); if(!h || h.children.length) continue;
-    h.innerHTML = RANGE_KEYS.map(k => `<button data-r="${k}">${k}</button>`).join("");
-    for(const b of h.children) b.onclick = () => setRange(b.dataset.r);
+  const h = $("rangeSel"); if(!h || h.children.length){ markRangeSels(); return; }
+  h.innerHTML = RANGE_KEYS.map(k => `<button data-r="${k}">${k}</button>`).join("") + `<button data-r="custom" id="customBtn">custom</button>`;
+  for(const b of h.children){
+    b.onclick = b.dataset.r === "custom" ? () => toggleCustomPop() : () => { toggleCustomPop(false); setRange(b.dataset.r); };
   }
+  $("cApply").onclick = () => {
+    const from = parseUTCInput($("cFrom").value), to = Math.min(parseUTCInput($("cTo").value), Date.now());
+    if(isNaN(from) || isNaN(to) || to <= from) return;
+    toggleCustomPop(false);
+    applyCustom(from, to);
+  };
+  // Close the popover on an outside click (the toggle button is the click target
+  // when opening, so opening isn't immediately undone).
+  document.addEventListener("click", e => {
+    const pop = $("customPop"); if(!pop || pop.hidden) return;
+    if(!pop.contains(e.target) && e.target.id !== "customBtn") pop.hidden = true;
+  });
   markRangeSels();
+}
+function toggleCustomPop(force){
+  const pop = $("customPop"); if(!pop) return;
+  const show = force != null ? force : pop.hidden;
+  if(show){
+    const now = Date.now(), nowStr = toUTCInput(now);
+    const f = chartRange === "custom" ? customFrom : now - 6*3600*1000;
+    const t = chartRange === "custom" ? customTo : now;
+    $("cFrom").value = toUTCInput(f); $("cFrom").max = nowStr;
+    $("cTo").value = toUTCInput(t); $("cTo").max = nowStr;
+  }
+  pop.hidden = !show;
+}
+function applyCustom(from, to){
+  customFrom = from; customTo = to; chartRange = "custom";
+  markRangeSels();
+  if(rangeTimer){ clearInterval(rangeTimer); rangeTimer = null; }
+  for(const k in hoverX) hoverX[k] = null;
+  fetchRanged(true); // a custom range is a static snapshot — no refresh timer
 }
 function setRange(r){
   if(!RANGES[r] || r === chartRange) return;
@@ -677,11 +746,14 @@ function setRange(r){
 }
 
 async function fetchRanged(animate){
-  const range = chartRange;
+  const token = chartRange + ":" + customFrom + ":" + customTo;
+  const url = chartRange === "custom"
+    ? `/api/history?from=${customFrom}&to=${customTo}`
+    : "/api/history?range=" + chartRange;
   try {
-    const res = await fetch("/api/history?range=" + range); if(!res.ok) return;
+    const res = await fetch(url); if(!res.ok) return;
     const d = await res.json();
-    if(chartRange !== range) return; // range changed mid-flight; drop stale response
+    if(chartRange + ":" + customFrom + ":" + customTo !== token) return; // changed mid-flight
     buildRangedPrice(d.price || []);
     buildRangedLatency(d.latency || []);
     buildRangedThroughput(d.throughput || []);

@@ -384,6 +384,15 @@ func buildHandler(ctx context.Context, cfg sink.ClickHouseConfig, sinkCfg sink.C
 		ch.Close()
 		return nil, nil, nil, err
 	}
+	// Seed the per-minute rollups with pre-existing history in the background so a
+	// large one-time backfill scan doesn't stall startup. Idempotent thereafter.
+	go func() {
+		if err := ch.BackfillRollups(ctx); err != nil {
+			log.Warn("rollup backfill failed", "error", err)
+		} else {
+			log.Info("rollup backfill complete")
+		}
+	}()
 	sinkCfg.Logger = log
 	batcher := sink.NewBatcher[norm.Trade](ch.Trades(), sinkCfg)
 	log.Info("writing trades to clickhouse", "addr", cfg.Addr)

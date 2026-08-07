@@ -663,3 +663,40 @@ A coarser bucket merges the minute states (`argMaxMerge`, `quantilesMerge`,
 **Revisit.** A 7-day range would want a second, coarser rollup (or an hourly
 one), and would be limited by the 30-day book TTL. If refresh-on-timer proves
 chatty, the longer ranges could ride the SSE stream at a slow cadence instead.
+
+## D24 — Custom date ranges: absolute from/to, native picker, full rollup backfill
+*2026-08-06*
+
+**Decision.** Alongside the preset ranges (D23), the charts get a custom date/time
+selector. The history queries now take an absolute `[from, to]` window
+(`ts_received BETWEEN ? AND ?`) instead of "last N seconds", and `/api/history`
+accepts either `?range=` (preset, ending now) or `?from=&to=` (unix ms). A custom
+span's bucket is computed to target ~80 points and snapped to a friendly step;
+the same `rollup(bucketSec)` rule then picks raw vs. the 1-minute views. The UI is
+two native `<input type="datetime-local">` fields (from/to) in a popover on the
+tab bar's range control, interpreted as UTC to match the dashboard; a custom range
+is a static snapshot (no live-append or refresh). To make wide custom ranges
+actually reach back, the rollup backfill was changed from a fixed 25h to filling
+the whole gap between raw retention and the view's current coverage, and moved to
+a background goroutine so its one-time ~10^9-row book scan doesn't stall startup.
+
+**Why.**
+- *Absolute windows are the only honest model for "pick a date."* Relative-to-now
+  can't express "last Tuesday 14:00–15:00"; BETWEEN can, and presets fold into it
+  trivially (to = now).
+- *Native datetime-local over a hand-built calendar.* It's a real calendar+time
+  popup, accessible, mobile-friendly, and CSP-safe with zero library code — the
+  bespoke look wasn't worth reimplementing date logic.
+- *Full backfill or custom is a lie.* The rollups only covered ~26h while raw held
+  ~12 days; without filling the gap, any wide custom range older than a day would
+  render empty. Aggregation groups to minutes, so even the book firehose backfills
+  cheaply — the cost is a one-time scan, hence the background goroutine.
+
+**Cost.**
+- The background backfill means the longest custom ranges are briefly incomplete
+  right after the deploy that first runs it, until the scan finishes.
+- drawChart now pins the window end to `to` (not `now`) and disables the stale
+  marker for custom ranges, since their data legitimately ends in the past.
+
+**Revisit.** If custom ranges routinely span weeks, a coarser (hourly) rollup tier
+would keep point counts and scans down; the book TTL (30d) still caps reach.
