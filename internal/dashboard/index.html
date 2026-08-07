@@ -671,7 +671,11 @@ function renderLatency(){
 }
 function renderThroughput(){
   const series = venueSeries((isLive() ? rateHist : rgRate)[rateSource] || {});
-  drawChart("rateChart", { series, zeroFloor: true, fmtLbl: p => axisNum(p) + "/s", fmtVal: fmtRate, ...rangeCfg() });
+  const cfg = rangeCfg();
+  // The live throughput bucket is coarser (10s), so after the partial bucket is
+  // dropped the last point can be ~20s old — widen the stale cutoff so a normal
+  // feed isn't flagged as dead.
+  drawChart("rateChart", { series, zeroFloor: true, fmtLbl: p => axisNum(p) + "/s", fmtVal: fmtRate, ...cfg, staleMs: Math.max(cfg.staleMs, 30000) });
   renderLegendEl("rateLegend", series, fmtRate);
 }
 function renderTechnical(){ renderPrice(); renderBasis(); renderLatency(); renderThroughput(); }

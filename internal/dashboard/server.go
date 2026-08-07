@@ -179,7 +179,11 @@ func (h *handler) stream(w http.ResponseWriter, r *http.Request) {
 			if lat, err := h.store.LatencyHistory(ctx, from, to, 3); err == nil {
 				payload["latency"] = lat
 			}
-			if rate, err := h.store.ThroughputHistory(ctx, from, to, 3); err == nil {
+			// Throughput uses a coarser bucket than latency: at 3s the sparse trade
+			// feed has 0-1 trades per venue per bucket, so rates quantize to 0/0.3/s
+			// and distinct venues collide. 10s gives enough count for a stable,
+			// meaningfully different rate per venue.
+			if rate, err := h.store.ThroughputHistory(ctx, from, to, 10); err == nil {
 				payload["throughput"] = rate
 			}
 		}
